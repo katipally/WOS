@@ -1,10 +1,22 @@
 // Model capability inference. Provider /models endpoints do not expose all
 // structured capability metadata, so these rules stay conservative.
 
-export type ModelProviderId = 'openai' | 'anthropic'
+export type ModelProviderId = 'openai' | 'anthropic' | 'huggingface-space'
+
+function unwrapModelId(id: string): string {
+  if (!id.startsWith('hfspace:')) return id
+  const raw = id.slice('hfspace:'.length)
+  const separator = raw.indexOf(':')
+  if (separator === -1) return id
+  try {
+    return decodeURIComponent(raw.slice(separator + 1))
+  } catch {
+    return id
+  }
+}
 
 export function modelSupportsReasoning(id: string): boolean {
-  const s = id.toLowerCase()
+  const s = unwrapModelId(id).toLowerCase()
   // OpenAI o-series reasoning models (o1, o3, o4, o5-mini, o10, ...)
   if (/^o\d+(-|\.|$)/.test(s)) return true
   // GPT-5 family (5, 5.x) reasoning via Responses API.
@@ -22,7 +34,7 @@ export function modelSupportsReasoning(id: string): boolean {
 }
 
 export function modelSupportsVision(id: string): boolean {
-  const s = id.toLowerCase()
+  const s = unwrapModelId(id).toLowerCase()
   if (/^gpt-4o/.test(s)) return true
   if (/^gpt-4\.1/.test(s)) return true
   if (/^gpt-5/.test(s)) return true
@@ -33,7 +45,11 @@ export function modelSupportsVision(id: string): boolean {
 }
 
 export function getContextWindow(id: string): number | undefined {
-  const s = id.toLowerCase()
+  const s = unwrapModelId(id).toLowerCase()
+  // Hugging Face Spaces models are typically served by vLLM with 8k context
+  // unless explicitly configured otherwise. This default keeps compaction and
+  // tool filtering sane for hfspace:* ids.
+  if (id.startsWith('hfspace:')) return 8192
   if (/^gpt-4\.1/.test(s)) return 1_000_000
   if (/^gpt-4o/.test(s)) return 128_000
   if (/^gpt-5/.test(s)) return 400_000
@@ -44,7 +60,7 @@ export function getContextWindow(id: string): number | undefined {
 }
 
 export function getModelDescription(id: string): string | undefined {
-  const s = id.toLowerCase()
+  const s = unwrapModelId(id).toLowerCase()
   if (/^gpt-5\.4/.test(s)) return 'GPT-5.4 flagship'
   if (/^gpt-5/.test(s)) return 'GPT-5 family'
   if (/^gpt-4\.1/.test(s)) return 'GPT-4.1 · 1M ctx'
@@ -56,6 +72,7 @@ export function getModelDescription(id: string): string | undefined {
   if (/^claude-sonnet-4/.test(s)) return 'Claude Sonnet 4'
   if (/^claude-haiku-4/.test(s)) return 'Claude Haiku 4'
   if (/^claude-3\.5/.test(s)) return 'Claude 3.5'
+  if (id.startsWith('hfspace:')) return 'Model served by a saved Hugging Face Space'
   return undefined
 }
 

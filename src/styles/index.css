@@ -149,6 +149,17 @@
     background: transparent;
   }
 
+  /* Ensure text selection works throughout the app (Electron drag regions can
+     inadvertently make large areas non-interactive/selectable). */
+  html, body {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+  .titlebar-drag, .titlebar-drag * {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
   /* Custom scrollbar */
   ::-webkit-scrollbar {
     width: 4px;

@@ -38,13 +38,16 @@ interface WosAPI {
   getAgentSettings: () => Promise<{ success: boolean; agents: AgentSettingsRecord[]; resolved: AgentSettingsRecord[] }>
   saveAgentSettings: (input: AgentSettingsSaveInput) => Promise<{ success: boolean; config?: Record<string, unknown> }>
 
-  saveApiKey: (provider: 'openai' | 'anthropic', key: string) => Promise<{ success: boolean }>
+  saveApiKey: (provider: 'openai' | 'anthropic' | 'huggingface-space', key: string) => Promise<{ success: boolean }>
   getApiKeysPresence: () => Promise<Record<string, boolean>>
-  testApiKey: (provider: 'openai' | 'anthropic', key: string) => Promise<{ ok: boolean; modelCount?: number; error?: string }>
+  testApiKey: (provider: 'openai' | 'anthropic' | 'huggingface-space', key: string) => Promise<{ ok: boolean; modelCount?: number; error?: string }>
 
   fetchModels: (provider: 'openai' | 'anthropic', apiKey: string) => Promise<{ success: boolean; models: import('./index').ModelInfo[]; error?: string }>
   fetchSavedModels: () => Promise<{ success: boolean; models: import('./index').ModelInfo[]; errors?: Array<{ provider: string; error?: string }> }>
   getFallbackModels: () => Promise<import('./index').ModelInfo[]>
+  listHuggingFaceSpaces: () => Promise<{ success: boolean; spaces: HuggingFaceSpaceInfo[] }>
+  inspectHuggingFaceSpace: (params: { source: string; baseUrlOverride?: string | null }) => Promise<{ success: boolean; space?: HuggingFaceSpaceInfo; models: import('./index').ModelInfo[]; error?: string }>
+  removeHuggingFaceSpace: (spaceId: string) => Promise<{ success: boolean }>
 
   getConversations: () => Promise<import('./index').Conversation[]>
   getConversation: (id: string) => Promise<import('./index').Conversation | null>
@@ -196,7 +199,23 @@ interface AgentSettingsSaveInput {
   mode?: string | null
   systemPrompt?: string | null
   config?: Record<string, unknown>
-  apiKeys?: Partial<Record<'openai' | 'anthropic', string>>
+  apiKeys?: Partial<Record<'openai' | 'anthropic' | 'huggingface-space', string>>
+}
+
+interface HuggingFaceSpaceInfo {
+  spaceId: string
+  source: string
+  baseUrl: string
+  baseUrlOverride?: string | null
+  title?: string | null
+  author?: string | null
+  sdk?: string | null
+  updatedAt?: string | null
+  runtimeStage?: string | null
+  likes?: number | null
+  private?: boolean
+  modelIds?: string[]
+  lastSyncedAt?: string | null
 }
 
 interface AppManifest {

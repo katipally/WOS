@@ -5,6 +5,15 @@ import { eq } from 'drizzle-orm'
 import { encryptApiKey, decryptApiKey } from '../crypto'
 import { getProviderByName, FALLBACK_MODELS } from '../providers'
 import { getDecryptedApiKeyOrNull } from '../providers/keystore'
+import {
+  fetchHuggingFaceSpaceModels,
+  inspectHuggingFaceSpace,
+  listHuggingFaceSpaces,
+  removeHuggingFaceSpace,
+  saveHuggingFaceSpace,
+  testHuggingFaceToken,
+} from '../providers/huggingfaceSpaces'
+import type { ModelProviderId } from '../providers/types'
 import { resolveAgent, redactAgentConfig, type AgentConfig } from '../agent/settings'
 
 type AgentSettingsUpdate = {
@@ -14,7 +23,7 @@ type AgentSettingsUpdate = {
   mode?: string | null
   systemPrompt?: string | null
   config?: AgentConfig
-  apiKeys?: Partial<Record<'openai' | 'anthropic', string>>
+  apiKeys?: Partial<Record<ModelProviderId, string>>
 }
 
 export function registerSettingsHandlers() {
@@ -77,16 +86,19 @@ export function registerSettingsHandlers() {
       ...((existing?.configJson ?? {}) as AgentConfig),
       ...(update.config ?? {}),
     }
-    for (const provider of ['openai', 'anthropic'] as const) {
+    for (const provider of ['openai', 'anthropic', 'huggingface-space'] as const) {
       const key = update.apiKeys?.[provider]?.trim()
       if (!key) continue
       const { encrypted, iv } = encryptApiKey(key)
       if (provider === 'openai') {
         config.openaiApiKeyEncrypted = encrypted
         config.openaiApiKeyIv = iv
-      } else {
+      } else if (provider === 'anthropic') {
         config.anthropicApiKeyEncrypted = encrypted
         config.anthropicApiKeyIv = iv
+      } else {
+        config.huggingFaceApiKeyEncrypted = encrypted
+        config.huggingFaceApiKeyIv = iv
       }
     }
     const now = new Date()
@@ -117,7 +129,7 @@ export function registerSettingsHandlers() {
     return { success: true, config: redactAgentConfig(config) }
   })
 
-  ipcMain.handle('settings:save-api-key', (_event, { provider, key }: { provider: 'openai' | 'anthropic'; key: string }) => {
+  ipcMain.handle('settings:save-api-key', (_event, { provider, key }: { provider: ModelProviderId; key: string }) => {
     const db = getDb()
     const { encrypted, iv } = encryptApiKey(key)
     const now = new Date()
@@ -144,8 +156,12 @@ export function registerSettingsHandlers() {
 
   ipcMain.handle(
     'settings:test-api-key',
-    async (_event, { provider, key }: { provider: 'openai' | 'anthropic'; key: string }) => {
+    async (_event, { provider, key }: { provider: ModelProviderId; key: string }) => {
       try {
+        if (provider === 'huggingface-space') {
+          await testHuggingFaceToken(key)
+          return { ok: true, modelCount: 0 }
+        }
         const p = getProviderByName(provider)
         const models = await p.fetchModels(key)
         return { ok: true, modelCount: models.length }
@@ -172,8 +188,31 @@ export function registerSettingsHandlers() {
     return FALLBACK_MODELS
   })
 
+  ipcMain.handle('hf-spaces:list', () => {
+    return { success: true, spaces: listHuggingFaceSpaces() }
+  })
+
+  ipcMain.handle(
+    'hf-spaces:inspect',
+    async (_event, { source, baseUrlOverride }: { source: string; baseUrlOverride?: string | null }) => {
+      try {
+        const token = await getDecryptedApiKeyOrNull('huggingface-space') ?? undefined
+        const result = await inspectHuggingFaceSpace(source, baseUrlOverride, token)
+        saveHuggingFaceSpace(result.space)
+        return { success: true, space: result.space, models: result.models }
+      } catch (err) {
+        return { success: false, error: (err as Error).message, models: [] }
+      }
+    }
+  )
+
+  ipcMain.handle('hf-spaces:remove', (_event, { spaceId }: { spaceId: string }) => {
+    removeHuggingFaceSpace(spaceId)
+    return { success: true }
+  })
+
   ipcMain.handle('models:fetch-saved', async () => {
-    const results: Array<{ provider: 'openai' | 'anthropic'; models: unknown[]; error?: string }> = []
+    const results: Array<{ provider: ModelProviderId; models: unknown[]; error?: string }> = []
     for (const provider of ['openai', 'anthropic'] as const) {
       const key = await getDecryptedApiKeyOrNull(provider)
       if (!key) continue
@@ -183,6 +222,15 @@ export function registerSettingsHandlers() {
         results.push({ provider, models })
       } catch (err) {
         results.push({ provider, models: [], error: (err as Error).message })
+      }
+    }
+    const hfToken = await getDecryptedApiKeyOrNull('huggingface-space') ?? undefined
+    for (const space of listHuggingFaceSpaces()) {
+      try {
+        const models = await fetchHuggingFaceSpaceModels(space, hfToken)
+        results.push({ provider: 'huggingface-space', models })
+      } catch (err) {
+        results.push({ provider: 'huggingface-space', models: [], error: `${space.spaceId}: ${(err as Error).message}` })
       }
     }
     const merged = results.flatMap(r => r.models as Array<{ id: string }>)

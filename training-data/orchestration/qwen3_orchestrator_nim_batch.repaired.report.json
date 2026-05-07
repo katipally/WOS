@@ -1,0 +1,21 @@
+{
+  "input": "training-data\\orchestration\\qwen3_orchestrator_nim_batch.jsonl",
+  "output": "training-data\\orchestration\\qwen3_orchestrator_nim_batch.repaired.jsonl",
+  "summary": {
+    "kept_records": 1300,
+    "dropped_assistant_final_unresolved_planning": 2,
+    "fixed_metadata_error_injected": 6
+  },
+  "dropped_examples": [
+    {
+      "line": 484,
+      "id": "85675b26-3050-4f49-a4f5-0159d2ae0993",
+      "reason": "assistant_final_unresolved_planning"
+    },
+    {
+      "line": 1058,
+      "id": "e51fa65c-cdb7-43f1-a6b4-9fda1b02b07c",
+      "reason": "assistant_final_unresolved_planning"
+    }
+  ]
+}

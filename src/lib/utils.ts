@@ -25,7 +25,8 @@ export function formatRelativeTime(date: Date): string {
   return new Date(date).toLocaleDateString()
 }
 
-export function getProviderFromModel(model: string): 'openai' | 'anthropic' | 'unknown' {
+export function getProviderFromModel(model: string): 'openai' | 'anthropic' | 'huggingface-space' | 'unknown' {
+  if (model.startsWith('hfspace:')) return 'huggingface-space'
   if (model.startsWith('claude')) return 'anthropic'
   if (model.startsWith('gpt-') || model.startsWith('o') || model.startsWith('chatgpt')) return 'openai'
   return 'unknown'

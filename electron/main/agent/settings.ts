@@ -3,6 +3,7 @@ import { decryptApiKey } from '../crypto'
 import { getDb, schema } from '../db'
 import { getDecryptedApiKeyOrNull } from '../providers/keystore'
 import { getProviderNameForModel } from '../providers'
+import type { ModelProviderId } from '../providers/types'
 import { getAgentDef } from './agentDefs'
 import { DEFAULT_MEETING_SYSTEM_PROMPT } from './agentDefs/meeting'
 
@@ -31,6 +32,8 @@ export interface AgentConfig {
   openaiApiKeyIv?: string
   anthropicApiKeyEncrypted?: string
   anthropicApiKeyIv?: string
+  huggingFaceApiKeyEncrypted?: string
+  huggingFaceApiKeyIv?: string
   [key: string]: unknown
 }
 
@@ -72,9 +75,17 @@ function getGlobalDefaults() {
   }
 }
 
-function decryptAgentKey(config: AgentConfig, provider: 'openai' | 'anthropic'): string | undefined {
-  const encrypted = provider === 'openai' ? config.openaiApiKeyEncrypted : config.anthropicApiKeyEncrypted
-  const iv = provider === 'openai' ? config.openaiApiKeyIv : config.anthropicApiKeyIv
+function decryptAgentKey(config: AgentConfig, provider: ModelProviderId): string | undefined {
+  const encrypted = provider === 'openai'
+    ? config.openaiApiKeyEncrypted
+    : provider === 'anthropic'
+      ? config.anthropicApiKeyEncrypted
+      : config.huggingFaceApiKeyEncrypted
+  const iv = provider === 'openai'
+    ? config.openaiApiKeyIv
+    : provider === 'anthropic'
+      ? config.anthropicApiKeyIv
+      : config.huggingFaceApiKeyIv
   if (!encrypted || !iv) return undefined
   return decryptApiKey(String(encrypted), String(iv))
 }
@@ -136,11 +147,24 @@ export async function resolveAgent(agentKey: AgentKey): Promise<AgentRuntimeSett
   }
 }
 
-export function redactAgentConfig(config: AgentConfig): AgentConfig & { openaiApiKeySet?: boolean; anthropicApiKeySet?: boolean } {
-  const { openaiApiKeyEncrypted, openaiApiKeyIv, anthropicApiKeyEncrypted, anthropicApiKeyIv, ...rest } = config
+export function redactAgentConfig(config: AgentConfig): AgentConfig & {
+  openaiApiKeySet?: boolean
+  anthropicApiKeySet?: boolean
+  huggingFaceApiKeySet?: boolean
+} {
+  const {
+    openaiApiKeyEncrypted,
+    openaiApiKeyIv,
+    anthropicApiKeyEncrypted,
+    anthropicApiKeyIv,
+    huggingFaceApiKeyEncrypted,
+    huggingFaceApiKeyIv,
+    ...rest
+  } = config
   return {
     ...rest,
     openaiApiKeySet: Boolean(openaiApiKeyEncrypted && openaiApiKeyIv),
     anthropicApiKeySet: Boolean(anthropicApiKeyEncrypted && anthropicApiKeyIv),
+    huggingFaceApiKeySet: Boolean(huggingFaceApiKeyEncrypted && huggingFaceApiKeyIv),
   }
 }

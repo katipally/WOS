@@ -9,6 +9,7 @@ import { estimateConversationTokens } from '../context/tokenCounter'
 import { pruneHistory, summarizeHistory } from '../context/compaction'
 import { getContextWindow } from '../../../src/lib/modelCapabilities'
 import { analyzeIntent, extractToolGroups, matchPluginTriggers } from './intentEngine'
+import { BASE_SYSTEM_PROMPT, buildPlanModePrompt, buildYoloModePrompt } from '../training/orchestration/prompt.ts'
 import fs from 'node:fs'
 
 // ─── E2E Agent Stub ──────────────────────────────────────────────────────────
@@ -149,35 +150,45 @@ function buildConnectedAppsSection(): string {
   }
 }
 
-const SYSTEM_PROMPT = `You are WOS, an AI agent assistant. You have access to tools to help accomplish tasks.
-When using tools, be precise and thorough. Always explain what you are doing.
-If you need clarification, use the AskUser tool.`
-
-
-function buildPlanModePrompt(base: string): string {
-  return base + `
-
-## Planning Mode
-You are in PLAN MODE. Think through the request and produce a detailed numbered plan
-describing every action you will take (which files to read, edit, create, or delete,
-and which tools you will invoke in what order).
-
-When your plan is ready, call the \`ExitPlanMode\` tool with the full plan text as the
-\`plan\` argument. This will present the plan to the user for approval. Do NOT call
-any other write/edit/bash tools before \`ExitPlanMode\` — only read-only exploration
-is allowed (Read, Glob, Grep).`
-}
-
-function buildYoloModePrompt(base: string): string {
-  return base + `
-
-## Autonomous Mode
-You are in YOLO (fully autonomous) mode. Execute all tasks without asking for permission.
-Make decisions autonomously and proceed efficiently.`
-}
+const SYSTEM_PROMPT = BASE_SYSTEM_PROMPT
 
 /** Trigger compaction when estimated tokens exceed this fraction of context limit. */
 const COMPACT_THRESHOLD = 0.75
+
+function compactConnectedAppsSection(section: string): string {
+  // For small-context models, the verbose Connected Apps section (tool counts + scopes)
+  // can dominate the prompt. Keep only the human-readable app names.
+  // Input looks like:
+  // ## Connected Apps
+  // - Slack (slack) — tools: 12, scopes: {...}
+  const lines = section.split('\n')
+  const out: string[] = []
+  for (const line of lines) {
+    if (line.startsWith('## ')) { out.push(line); continue }
+    if (!line.trim().startsWith('-')) continue
+    const m = line.match(/^\-\s+([^\(]+)\s*\(/)
+    if (m?.[1]) out.push(`- ${m[1].trim()}`)
+  }
+  return out.length > 1 ? out.join('\n') : section
+}
+
+function isSmallContextModel(effectiveContextLimit: number): boolean {
+  return effectiveContextLimit <= 10_000
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n))
+}
+
+function computeOutputTokenBudget(effectiveContextLimit: number, estimatedPromptTokens: number): number {
+  // Reserve a safety buffer so vLLM-style servers don't reject the request.
+  // For 8k models, output tokens must be significantly smaller than context.
+  const reserveForOverhead = 512
+  const available = effectiveContextLimit - estimatedPromptTokens - reserveForOverhead
+  // Default output budget targets: 512 for small models, 2048 for larger.
+  const target = effectiveContextLimit <= 10_000 ? 512 : 2048
+  return clamp(Math.min(target, available), 128, target)
+}
 
 export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEvent> {
   const {
@@ -188,6 +199,7 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
   } = options
 
   const effectiveContextLimit = contextLimit ?? getContextWindow(model) ?? 200_000
+  const smallCtx = isSmallContextModel(effectiveContextLimit)
 
   // Run intent analysis once per queryLoop to determine which tools to include.
   // Skip for subagents (maxDepth > 0), plan mode, and when explicitly disabled.
@@ -246,7 +258,10 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
   }
 
   // Build the connected-apps awareness section once per turn (deterministic, sorted).
-  const connectedAppsSection = buildConnectedAppsSection()
+  const connectedAppsSectionRaw = buildConnectedAppsSection()
+  const connectedAppsSection = smallCtx && connectedAppsSectionRaw
+    ? compactConnectedAppsSection(connectedAppsSectionRaw)
+    : connectedAppsSectionRaw
 
   // Priority stack: override > (base + mode + workspace + rules + skills + custom) > append
   let systemPrompt: string
@@ -260,9 +275,14 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
     if (connectedAppsSection) systemPrompt = `${connectedAppsSection}\n\n${systemPrompt}`
     if (mode === 'plan') systemPrompt = buildPlanModePrompt(systemPrompt)
     if (mode === 'yolo') systemPrompt = buildYoloModePrompt(systemPrompt)
-    if (workspacePath) systemPrompt += `\n\n## Workspace\nCurrent workspace: ${workspacePath}`
-    if (rulesSection) systemPrompt += `\n\n${rulesSection}`
-    if (skillsSection) systemPrompt += `\n\n${skillsSection}`
+    // For small-context models (e.g. HF Space vLLM 8k), these sections can easily
+    // overwhelm the context budget and cause hard 400s even on short user messages.
+    // Keep core policy and connected-app awareness, but drop optional expansions.
+    if (!smallCtx) {
+      if (workspacePath) systemPrompt += `\n\n## Workspace\nCurrent workspace: ${workspacePath}`
+      if (rulesSection) systemPrompt += `\n\n${rulesSection}`
+      if (skillsSection) systemPrompt += `\n\n${skillsSection}`
+    }
     if (systemPromptCustom) systemPrompt += `\n\n## Custom Instructions\n${systemPromptCustom}`
     if (agentDef?.systemPrompt) systemPrompt += `\n${agentDef.systemPrompt}`
   }
@@ -286,13 +306,45 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
     // Apply intent-based tool filter when available and confident enough.
     // Always include builtin tools regardless of filter (they are safe defaults).
     const ALWAYS_INCLUDE = new Set([
-      'FileRead', 'FileWrite', 'FileEdit', 'Glob', 'Grep', 'Bash',
+      'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash',
       'WebFetch', 'WebSearch', 'Task', 'AskUser', 'TodoWrite',
       'EnterPlanMode', 'ExitPlanMode', 'ReadSkill', 'ReadAppSkill', 'ReadRule',
     ])
-    const filteredTools = intentToolFilter.length > 0
+    let filteredTools = intentToolFilter.length > 0
       ? allTools.filter(t => ALWAYS_INCLUDE.has(t.name) || intentToolFilter.includes(t.name))
       : allTools
+
+    // Small-context guardrail: if we didn't get a confident intent filter, avoid sending
+    // *every* tool schema to the model (tool schemas count toward context in most servers).
+    // Prefer connected-app tools + core builtins as a safe default.
+    if (smallCtx && intentToolFilter.length === 0) {
+      filteredTools = allTools.filter(t =>
+        ALWAYS_INCLUDE.has(t.name) ||
+        t.name.startsWith('Slack') ||
+        t.name.startsWith('GitHub') ||
+        t.name.startsWith('Jira') ||
+        t.name.startsWith('Google') ||
+        t.name.startsWith('Gmail') ||
+        t.name.startsWith('automation_') ||
+        t.name.startsWith('wos_projects_')
+      )
+    }
+
+    // Absolute cap for tiny-context models to avoid pathological prompts.
+    if (smallCtx && filteredTools.length > 80) {
+      const keep = new Map(filteredTools.map(t => [t.name, t]))
+      const coreOrder = [...ALWAYS_INCLUDE]
+      const out: typeof filteredTools = []
+      for (const name of coreOrder) {
+        const t = keep.get(name)
+        if (t) out.push(t)
+      }
+      for (const t of filteredTools) {
+        if (out.length >= 80) break
+        if (!out.includes(t)) out.push(t)
+      }
+      filteredTools = out
+    }
 
     const toolDefs = (maxDepth > 0
       ? filteredTools.filter(t => t.name !== 'Task') // No recursive subagents
@@ -306,14 +358,24 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
     // Auto-compact if estimated token count exceeds COMPACT_THRESHOLD of context limit.
     // Skip compaction for subagents (maxDepth > 0) and E2E stubs to keep those simple.
     if (!process.env.WOS_E2E_AGENT_SCRIPT && maxDepth === 0) {
-      const estimated = estimateConversationTokens(history, systemPrompt, toolDefs)
-      if (estimated > effectiveContextLimit * COMPACT_THRESHOLD && history.length > 4) {
+      let estimated = estimateConversationTokens(history, systemPrompt, toolDefs)
+
+      // Hard guardrail for small-context models: ensure we leave headroom for output tokens.
+      // If we are close to the limit, compact even if we haven't crossed COMPACT_THRESHOLD.
+      const minOutputHeadroom = smallCtx ? 768 : 2048
+      const mustCompact = estimated > effectiveContextLimit - minOutputHeadroom
+
+      if ((mustCompact || estimated > effectiveContextLimit * COMPACT_THRESHOLD) && history.length > 4) {
         yield { type: 'compact_started' }
         try {
           // Try pruning first (fast, no API call). If still over threshold, summarize.
           const { pruned } = pruneHistory(history)
-          const afterPrune = estimateConversationTokens(pruned, systemPrompt, toolDefs)
-          if (afterPrune <= effectiveContextLimit * COMPACT_THRESHOLD) {
+          let afterPrune = estimateConversationTokens(pruned, systemPrompt, toolDefs)
+          const pruneOk = smallCtx
+            ? (afterPrune <= effectiveContextLimit - minOutputHeadroom)
+            : (afterPrune <= effectiveContextLimit * COMPACT_THRESHOLD)
+
+          if (pruneOk) {
             history.length = 0
             history.push(...pruned)
             yield { type: 'compact_complete', summary: `Pruned ${history.length - pruned.length} old messages to stay within context limit.` }
@@ -342,6 +404,11 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
           reasoningEffort,
           apiKeyOverride,
           signal,
+          // Keep output budget proportional to context window.
+          maxTokens: computeOutputTokenBudget(
+            effectiveContextLimit,
+            estimateConversationTokens(history, systemPrompt, toolDefs),
+          ),
         })
 
     if (!turnStarted) {

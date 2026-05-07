@@ -112,7 +112,7 @@ export interface Workspace {
 export interface ModelInfo {
   id: string
   name: string
-  provider: 'openai' | 'anthropic'
+  provider: 'openai' | 'anthropic' | 'huggingface-space'
   contextWindow?: number
   supportsReasoning?: boolean
   supportsVision?: boolean

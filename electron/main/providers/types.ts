@@ -44,10 +44,12 @@ export interface TokenUsage {
   outputTokens: number
 }
 
+export type ModelProviderId = 'openai' | 'anthropic' | 'huggingface-space'
+
 export interface ModelInfo {
   id: string
   name: string
-  provider: 'openai' | 'anthropic'
+  provider: ModelProviderId
   contextWindow?: number
   supportsReasoning?: boolean
   supportsVision?: boolean

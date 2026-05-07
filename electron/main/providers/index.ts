@@ -1,18 +1,22 @@
 import { OpenAIProvider } from './openai'
 import { AnthropicProvider } from './anthropic'
-import type { ModelProvider, ModelInfo } from './types'
+import { HuggingFaceSpaceProvider } from './huggingfaceSpaceProvider'
+import { isHuggingFaceSpaceModelId } from './huggingfaceSpaces'
+import type { ModelProvider, ModelInfo, ModelProviderId } from './types'
 import { enrichModel } from './capabilities'
 
-const providers: Record<string, ModelProvider> = {
+const providers: Record<ModelProviderId, ModelProvider> = {
   openai: new OpenAIProvider(),
   anthropic: new AnthropicProvider(),
+  'huggingface-space': new HuggingFaceSpaceProvider(),
 }
 
 export function getProvider(model: string): ModelProvider {
   return providers[getProviderNameForModel(model)]
 }
 
-export function getProviderNameForModel(model: string): 'openai' | 'anthropic' {
+export function getProviderNameForModel(model: string): ModelProviderId {
+  if (isHuggingFaceSpaceModelId(model)) return 'huggingface-space'
   if (model.startsWith('claude')) return 'anthropic'
   if (
     model.startsWith('gpt-') ||
@@ -26,7 +30,7 @@ export function getProviderNameForModel(model: string): 'openai' | 'anthropic' {
   return 'openai'
 }
 
-export function getProviderByName(name: 'openai' | 'anthropic'): ModelProvider {
+export function getProviderByName(name: ModelProviderId): ModelProvider {
   return providers[name]
 }
 

@@ -1,0 +1,63 @@
+﻿{
+  "dataset": "training-data\\orchestration\\qwen3_orchestrator_train_val.jsonl",
+  "lines_nonempty": 1883,
+  "lines_valid_json": 1883,
+  "error_total": 0,
+  "error_types": {},
+  "split_counts": {
+    "train": 1790,
+    "validation": 93
+  },
+  "model_counts": {
+    "google/gemma-4-31b-it": 1035,
+    "qwen/qwen3-coder-480b-a35b-instruct": 415,
+    "deepseek-ai/deepseek-v4-flash": 309,
+    "nvidia/nemotron-3-super-120b-a12b": 34,
+    "meta/llama-3.3-70b-instruct": 41,
+    "moonshotai/kimi-k2.6": 38,
+    "deepseek-ai/deepseek-v4-pro": 11
+  },
+  "top_role_patterns": [
+    [
+      "system -> user -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant",
+      441
+    ],
+    [
+      "system -> user -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant",
+      391
+    ],
+    [
+      "system -> user -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant",
+      261
+    ],
+    [
+      "system -> user -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant",
+      166
+    ],
+    [
+      "system -> user -> assistant -> tool -> assistant -> tool -> assistant",
+      78
+    ],
+    [
+      "system -> user -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant",
+      70
+    ],
+    [
+      "system -> user -> assistant -> tool -> assistant",
+      45
+    ],
+    [
+      "system -> user -> assistant -> tool -> assistant -> tool -> tool -> assistant -> tool -> assistant",
+      37
+    ],
+    [
+      "system -> user -> assistant -> tool -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant",
+      37
+    ],
+    [
+      "system -> user -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant",
+      30
+    ]
+  ],
+  "examples": {}
+}

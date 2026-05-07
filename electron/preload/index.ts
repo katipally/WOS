@@ -89,10 +89,10 @@ contextBridge.exposeInMainWorld('wos', {
   saveAgentSettings: (input: unknown) => ipcRenderer.invoke('settings:agents:save', input),
 
   // API Keys
-  saveApiKey: (provider: 'openai' | 'anthropic', key: string) =>
+  saveApiKey: (provider: 'openai' | 'anthropic' | 'huggingface-space', key: string) =>
     ipcRenderer.invoke('settings:save-api-key', { provider, key }),
   getApiKeysPresence: () => ipcRenderer.invoke('settings:get-api-keys-presence'),
-  testApiKey: (provider: 'openai' | 'anthropic', key: string) =>
+  testApiKey: (provider: 'openai' | 'anthropic' | 'huggingface-space', key: string) =>
     ipcRenderer.invoke('settings:test-api-key', { provider, key }),
 
   // Models
@@ -100,6 +100,11 @@ contextBridge.exposeInMainWorld('wos', {
     ipcRenderer.invoke('models:fetch', { provider, apiKey }),
   fetchSavedModels: () => ipcRenderer.invoke('models:fetch-saved'),
   getFallbackModels: () => ipcRenderer.invoke('models:fallback'),
+  listHuggingFaceSpaces: () => ipcRenderer.invoke('hf-spaces:list'),
+  inspectHuggingFaceSpace: (params: { source: string; baseUrlOverride?: string | null }) =>
+    ipcRenderer.invoke('hf-spaces:inspect', params),
+  removeHuggingFaceSpace: (spaceId: string) =>
+    ipcRenderer.invoke('hf-spaces:remove', { spaceId }),
 
   // Database
   getConversations: () => ipcRenderer.invoke('db:conversations:list'),

@@ -1,0 +1,62 @@
+﻿{
+  "dataset": "training-data\\orchestration\\qwen3_orchestrator_blind_test.jsonl",
+  "lines_nonempty": 97,
+  "lines_valid_json": 97,
+  "error_total": 0,
+  "error_types": {},
+  "split_counts": {
+    "blind_test": 97
+  },
+  "model_counts": {
+    "deepseek-ai/deepseek-v4-flash": 28,
+    "google/gemma-4-31b-it": 43,
+    "qwen/qwen3-coder-480b-a35b-instruct": 16,
+    "meta/llama-3.3-70b-instruct": 4,
+    "nvidia/nemotron-3-super-120b-a12b": 3,
+    "moonshotai/kimi-k2.6": 2,
+    "deepseek-ai/deepseek-v4-pro": 1
+  },
+  "top_role_patterns": [
+    [
+      "system -> user -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant",
+      26
+    ],
+    [
+      "system -> user -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant",
+      22
+    ],
+    [
+      "system -> user -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant",
+      20
+    ],
+    [
+      "system -> user -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant",
+      7
+    ],
+    [
+      "system -> user -> assistant -> tool -> assistant -> tool -> assistant",
+      4
+    ],
+    [
+      "system -> user -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant",
+      2
+    ],
+    [
+      "system -> user -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant -> tool -> assistant",
+      2
+    ],
+    [
+      "system -> user -> assistant -> tool -> assistant",
+      2
+    ],
+    [
+      "system -> user -> assistant -> tool -> assistant -> tool -> assistant -> tool -> tool -> assistant",
+      2
+    ],
+    [
+      "system -> user -> assistant -> tool -> assistant -> tool -> tool -> assistant",
+      2
+    ]
+  ],
+  "examples": {}
+}

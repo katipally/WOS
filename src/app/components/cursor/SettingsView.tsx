@@ -10,6 +10,7 @@ import { useSettingsStore } from '../../../store/settingsStore'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import { useAgentStore } from '../../../store/agentStore'
 import { modelSupportsReasoning } from '../../../lib/modelCapabilities'
+import { formatRelativeTime, getProviderFromModel } from '../../../lib/utils'
 
 interface SettingsViewProps {
   onBack: () => void
@@ -24,6 +25,34 @@ const SECTIONS: Array<{ id: SectionId; label: string; icon: React.ElementType; d
   { id: 'connections', label: 'Connections', icon: Link, description: 'API keys and integrations' },
   { id: 'account', label: 'Account', icon: BarChart2, description: 'Usage, billing, and about' },
 ]
+
+const PROVIDER_ORDER = ['anthropic', 'openai', 'huggingface-space'] as const
+const PROVIDER_LABELS: Record<ModelInfo['provider'], string> = {
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  'huggingface-space': 'HF Space',
+}
+
+type HuggingFaceSpaceInfo = {
+  spaceId: string
+  source: string
+  baseUrl: string
+  baseUrlOverride?: string | null
+  title?: string | null
+  author?: string | null
+  sdk?: string | null
+  updatedAt?: string | null
+  runtimeStage?: string | null
+  likes?: number | null
+  private?: boolean
+  modelIds?: string[]
+  lastSyncedAt?: string | null
+}
+
+function getProviderLabel(provider: ModelInfo['provider'] | 'unknown'): string {
+  if (provider === 'unknown') return 'Unknown'
+  return PROVIDER_LABELS[provider]
+}
 
 export function SettingsView({ onBack }: SettingsViewProps) {
   const [section, setSection] = useState<SectionId>('preferences')
@@ -202,6 +231,13 @@ function AIAgentsSection() {
 
       <div style={{ height: '1px', background: 'var(--border)' }} />
 
+      <div className="space-y-6">
+        <h3 className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>Hugging Face Spaces</h3>
+        <HuggingFaceSpacesSection onModelsChanged={refresh} />
+      </div>
+
+      <div style={{ height: '1px', background: 'var(--border)' }} />
+
       {/* Agents */}
       <div className="space-y-6">
         <h3 className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>Agents</h3>
@@ -348,19 +384,26 @@ function AccountSection() {
 function useSavedModels() {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [loading, setLoading] = useState(false)
+
+  const sortModels = (list: ModelInfo[]) => [...list].sort((left, right) => {
+    const providerDelta = PROVIDER_ORDER.indexOf(left.provider) - PROVIDER_ORDER.indexOf(right.provider)
+    if (providerDelta !== 0) return providerDelta
+    return left.name.localeCompare(right.name)
+  })
+
   const fetch = async () => {
     setLoading(true)
     try {
       const res = await window.wos.fetchSavedModels()
-      if (res?.models?.length) setModels(res.models)
+      if (res?.models?.length) setModels(sortModels(res.models))
       else {
         const fb = await window.wos.getFallbackModels()
-        setModels(fb)
+        setModels(sortModels(fb))
       }
     } catch {
       try {
         const fb = await window.wos.getFallbackModels()
-        setModels(fb)
+        setModels(sortModels(fb))
       } catch {}
     } finally {
       setLoading(false)
@@ -368,6 +411,137 @@ function useSavedModels() {
   }
   useEffect(() => { fetch() }, [])
   return { models, loading, refresh: fetch }
+}
+
+function HuggingFaceSpacesSection({ onModelsChanged }: { onModelsChanged: () => Promise<void> | void }) {
+  const [spaces, setSpaces] = useState<HuggingFaceSpaceInfo[]>([])
+  const [source, setSource] = useState('')
+  const [baseUrlOverride, setBaseUrlOverride] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const load = async () => {
+    const res = await window.wos.listHuggingFaceSpaces()
+    if (res.success) setSpaces(res.spaces)
+  }
+
+  useEffect(() => { void load() }, [])
+
+  const inspect = async () => {
+    if (!source.trim()) return
+    setLoading(true)
+    try {
+      const res = await window.wos.inspectHuggingFaceSpace({
+        source,
+        baseUrlOverride: baseUrlOverride.trim() || null,
+      })
+      if (!res.success || !res.space) {
+        toast.error(res.error ?? 'Could not load the Hugging Face Space.')
+        return
+      }
+      toast.success(`Loaded ${res.space.spaceId}`)
+      setSource('')
+      setBaseUrlOverride('')
+      await load()
+      await Promise.resolve(onModelsChanged())
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const remove = async (spaceId: string) => {
+    await window.wos.removeHuggingFaceSpace(spaceId)
+    toast.success(`Removed ${spaceId}`)
+    await load()
+    await Promise.resolve(onModelsChanged())
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+        Add an OpenAI-compatible HF Space by slug or Hugging Face URL. Its exposed models will be merged into the main model selectors for both WOS and Meeting.
+      </p>
+      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+        <input
+          value={source}
+          onChange={e => setSource(e.target.value)}
+          placeholder="owner/space or https://huggingface.co/spaces/owner/space"
+          className="w-full px-3 py-2 rounded-lg text-xs"
+          style={{ background: 'var(--input)', border: '1px solid var(--border)', color: 'var(--foreground)' }}
+        />
+        <input
+          value={baseUrlOverride}
+          onChange={e => setBaseUrlOverride(e.target.value)}
+          placeholder="Optional base URL override"
+          className="w-full px-3 py-2 rounded-lg text-xs"
+          style={{ background: 'var(--input)', border: '1px solid var(--border)', color: 'var(--foreground)' }}
+        />
+        <button
+          onClick={() => { void inspect() }}
+          disabled={!source.trim() || loading}
+          className="px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-40"
+          style={{ background: 'var(--surface-raised)', color: 'var(--amber)', border: '1px solid var(--surface-strong)' }}
+        >
+          {loading ? 'Loading…' : 'Load Space'}
+        </button>
+      </div>
+      <div className="space-y-2">
+        {spaces.length === 0 && (
+          <div style={{ color: 'var(--muted-foreground)', fontSize: '12px' }}>
+            No Hugging Face Spaces saved yet.
+          </div>
+        )}
+        {spaces.map(space => {
+          const updatedLabel = space.updatedAt ? formatRelativeTime(new Date(space.updatedAt)) : null
+          return (
+            <div
+              key={space.spaceId}
+              className="rounded-xl p-4 space-y-3"
+              style={{ background: 'var(--card)', border: '1px solid var(--border)' }}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium" style={{ color: 'var(--foreground)' }}>
+                      {space.title ?? space.spaceId}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded text-[10px]"
+                      style={{ background: 'var(--surface-base)', color: 'var(--secondary-foreground)' }}>
+                      {space.sdk ?? 'unknown sdk'}
+                    </span>
+                    {space.runtimeStage && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px]"
+                        style={{ background: 'var(--amber-muted)', color: 'var(--amber)' }}>
+                        {space.runtimeStage}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 font-mono text-[11px] truncate" style={{ color: 'var(--border-strong)' }}>
+                    {space.spaceId}
+                  </div>
+                  <div className="mt-1 text-[11px]" style={{ color: 'var(--muted-foreground)' }}>
+                    Owner: {space.author ?? 'unknown'}
+                    {updatedLabel ? ` · Updated ${updatedLabel}` : ''}
+                    {Array.isArray(space.modelIds) ? ` · ${space.modelIds.length} model${space.modelIds.length === 1 ? '' : 's'}` : ''}
+                  </div>
+                </div>
+                <button
+                  onClick={() => { void remove(space.spaceId) }}
+                  className="p-1 rounded hover:text-red-400 transition-colors"
+                  style={{ color: 'var(--border-strong)' }}
+                  title="Remove space"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+              <div className="font-mono text-[10px] truncate" style={{ color: 'var(--secondary-foreground)' }}>
+                {space.baseUrl}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 // ---------------- General ----------------
@@ -578,6 +752,7 @@ function AgentCard({
   const [inherit, setInherit] = useState(inherits)
   const [openaiKey, setOpenaiKey] = useState('')
   const [anthropicKey, setAnthropicKey] = useState('')
+  const [huggingFaceKey, setHuggingFaceKey] = useState('')
 
   useEffect(() => {
     setModel(agent?.model ?? resolved?.model ?? '')
@@ -641,12 +816,15 @@ function AgentCard({
         />
       </Field>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid gap-3 md:grid-cols-3">
         <Field label={`OpenAI key ${agent?.config?.openaiApiKeySet ? '(configured)' : ''}`}>
           <input type="password" value={openaiKey} onChange={e => setOpenaiKey(e.target.value)} className="w-full px-3 py-2 rounded-md outline-none" style={inputStyle} placeholder="Leave blank to keep current" />
         </Field>
         <Field label={`Anthropic key ${agent?.config?.anthropicApiKeySet ? '(configured)' : ''}`}>
           <input type="password" value={anthropicKey} onChange={e => setAnthropicKey(e.target.value)} className="w-full px-3 py-2 rounded-md outline-none" style={inputStyle} placeholder="Leave blank to keep current" />
+        </Field>
+        <Field label={`Hugging Face token ${agent?.config?.huggingFaceApiKeySet ? '(configured)' : ''}`}>
+          <input type="password" value={huggingFaceKey} onChange={e => setHuggingFaceKey(e.target.value)} className="w-full px-3 py-2 rounded-md outline-none" style={inputStyle} placeholder="Leave blank to keep current" />
         </Field>
       </div>
 
@@ -660,7 +838,8 @@ function AgentCard({
         }, {
           ...(openaiKey ? { openai: openaiKey } : {}),
           ...(anthropicKey ? { anthropic: anthropicKey } : {}),
-        }).then(() => { setOpenaiKey(''); setAnthropicKey('') })}
+          ...(huggingFaceKey ? { 'huggingface-space': huggingFaceKey } : {}),
+        }).then(() => { setOpenaiKey(''); setAnthropicKey(''); setHuggingFaceKey('') })}
         className="px-3 py-1.5 rounded-md disabled:opacity-50"
         style={{ background: 'var(--surface-raised)', color: 'var(--amber)', border: '1px solid var(--surface-strong)', fontSize: '12px' }}
       >
@@ -698,11 +877,12 @@ function ModelAutocomplete({
     return models.filter(m =>
       m.id.toLowerCase().includes(q) ||
       m.name.toLowerCase().includes(q) ||
-      m.provider.toLowerCase().includes(q)
+      getProviderLabel(m.provider).toLowerCase().includes(q)
     )
   }, [models, query])
 
   const selected = models.find(m => m.id === value)
+  const selectedProvider = selected?.provider ?? getProviderFromModel(value)
 
   return (
     <div ref={ref} className="relative">
@@ -713,7 +893,7 @@ function ModelAutocomplete({
           style={{ background: 'var(--card)', border: '1px solid var(--border)', fontSize: '12px' }}
         >
           <span className="flex items-center gap-2 truncate" style={{ color: 'var(--foreground)' }}>
-            <span style={{ color: 'var(--muted-foreground)' }}>{selected?.provider ?? 'unknown'}</span>
+            <span style={{ color: 'var(--muted-foreground)' }}>{getProviderLabel(selectedProvider)}</span>
             <span>{selected?.name ?? value}</span>
             {selected && <ModelCapPills m={selected} />}
           </span>
@@ -759,7 +939,7 @@ function ModelAutocomplete({
             >
               <span className="flex items-center gap-2 min-w-0">
                 <span className="font-mono uppercase" style={{ color: 'var(--border-strong)', fontSize: '9px' }}>
-                  {m.provider}
+                  {getProviderLabel(m.provider)}
                 </span>
                 <span className="truncate" style={{ color: 'var(--foreground)', fontSize: '12px' }}>
                   {m.name}
@@ -816,16 +996,18 @@ function ApiKeysSection() {
       <SectionHeader title="API Keys" subtitle="Keys are stored encrypted using your OS keychain" />
       <ApiKeyRow provider="openai" label="OpenAI" hasKey={!!presence.openai} onChange={refreshPresence} />
       <ApiKeyRow provider="anthropic" label="Anthropic" hasKey={!!presence.anthropic} onChange={refreshPresence} />
+      <ApiKeyRow provider="huggingface-space" label="Hugging Face" hasKey={!!presence['huggingface-space']} onChange={refreshPresence} />
     </div>
   )
 }
 
 function ApiKeyRow({
   provider, label, hasKey, onChange,
-}: { provider: 'openai' | 'anthropic'; label: string; hasKey: boolean; onChange: () => void }) {
+}: { provider: 'openai' | 'anthropic' | 'huggingface-space'; label: string; hasKey: boolean; onChange: () => void }) {
   const [value, setValue] = useState('')
   const [state, setState] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
+  const credentialLabel = provider === 'huggingface-space' ? 'token' : 'API key'
 
   const test = async () => {
     if (!value) return
@@ -861,7 +1043,7 @@ function ApiKeyRow({
           type="password"
           value={value}
           onChange={e => setValue(e.target.value)}
-          placeholder={hasKey ? '••••••••  (paste to replace)' : `Paste ${label} API key`}
+          placeholder={hasKey ? '••••••••  (paste to replace)' : `Paste ${label} ${credentialLabel}`}
           className="flex-1 px-3 py-1.5 rounded-md outline-none"
           style={{ background: 'var(--input)', border: '1px solid var(--border)', color: 'var(--foreground)', fontSize: '12px' }}
         />
@@ -884,7 +1066,7 @@ function ApiKeyRow({
       </div>
       {state === 'ok' && (
         <div className="flex items-center gap-1 text-emerald-400" style={{ fontSize: '11px' }}>
-          <CheckCircle2 size={12} /> Key is valid
+          <CheckCircle2 size={12} /> {provider === 'huggingface-space' ? 'Token is valid' : 'Key is valid'}
         </div>
       )}
       {state === 'error' && error && (

@@ -36,8 +36,18 @@ export function estimateConversationTokens(
     total += 4 // role overhead
   }
 
-  // Tool definitions add overhead — estimate ~200 tokens per tool
-  total += tools.length * 200
+  // Tool definitions can be a *major* part of the prompt. Estimating a flat
+  // per-tool overhead wildly over/under counts depending on schema size, and
+  // makes the UI/context compaction behave unpredictably. Approximate by the
+  // serialized payload size instead.
+  if (tools.length > 0) {
+    try {
+      total += estimateTokens(JSON.stringify(tools))
+    } catch {
+      // Fallback: conservative flat estimate if serialization fails.
+      total += tools.length * 200
+    }
+  }
 
   // Safety buffer: add 5% for formatting/metadata
   return Math.ceil(total * 1.05)

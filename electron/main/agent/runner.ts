@@ -373,8 +373,21 @@ export class AgentRunner {
       throw new Error('No user message to continue from')
     }
 
+    const parseBlocks = (raw: unknown): MessageBlock[] => {
+      if (Array.isArray(raw)) return raw as MessageBlock[]
+      if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw)
+          return Array.isArray(parsed) ? (parsed as MessageBlock[]) : []
+        } catch {
+          return []
+        }
+      }
+      return []
+    }
+
     // Extract the user message text
-    const lastBlocks = (lastMsg.blocks as MessageBlock[]) ?? []
+    const lastBlocks = parseBlocks(lastMsg.blocks)
     const userMessage = lastBlocks
       .filter(b => b.type === 'text')
       .map(b => (typeof b.content === 'string' ? b.content : ''))
@@ -384,7 +397,7 @@ export class AgentRunner {
     const historyMsgs = activeMsgs.slice(0, -1)
     const history: ConversationMessage[] = []
     for (const m of historyMsgs) {
-      const blocks = (m.blocks as MessageBlock[]) ?? []
+      const blocks = parseBlocks(m.blocks)
       const role = m.role as 'user' | 'assistant'
       const textParts: string[] = []
       const blockContent: ContentBlock[] = []

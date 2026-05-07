@@ -28,6 +28,20 @@ export function applyEvent(blocks: MessageBlock[], event: AgentEvent): MessageBl
       return [...blocks, { type: 'reasoning', content: event.content, collapsed: false, done: false }]
     }
 
+    // Some providers emit "thinking_delta" instead of "reasoning_delta".
+    // In the UI we treat these identically: a collapsible reasoning block that
+    // auto-collapses when the assistant starts emitting final text.
+    case 'thinking_delta': {
+      const last = blocks[blocks.length - 1]
+      if (last?.type === 'reasoning' && !last.done) {
+        return [
+          ...blocks.slice(0, -1),
+          { ...last, content: last.content + event.content },
+        ]
+      }
+      return [...blocks, { type: 'reasoning', content: event.content, collapsed: false, done: false }]
+    }
+
     case 'turn_start':
       return blocks
 

@@ -1,28 +1,71 @@
-import { useState } from 'react'
-import { Cpu, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Cpu, Loader2, X } from 'lucide-react'
+import type { ModelInfo } from '../../../types'
 
-export const MODEL_LIST = [
-  { id: 'claude-opus-4-7',   name: 'Claude Opus 4.7',   provider: 'anthropic' as const, desc: 'Strongest reasoning & analysis' },
-  { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'anthropic' as const, desc: 'Best balance of speed & quality' },
-  { id: 'claude-haiku-4-5',  name: 'Claude Haiku 4.5',  provider: 'anthropic' as const, desc: 'Fastest, great for quick tasks' },
-  { id: 'gpt-5.4',           name: 'GPT-5.4',           provider: 'openai'    as const, desc: 'OpenAI flagship model' },
-  { id: 'gpt-5.3-codex',     name: 'GPT-5.3 Codex',     provider: 'openai'    as const, desc: 'Optimised for code generation' },
-  { id: 'gpt-4o',            name: 'GPT-4o',             provider: 'openai'    as const, desc: 'Fast multimodal model' },
-  { id: 'gpt-4o-mini',       name: 'GPT-4o Mini',       provider: 'openai'    as const, desc: 'Compact & cost-effective' },
-  { id: 'o3',                name: 'o3',                 provider: 'openai'    as const, desc: 'Advanced reasoning model' },
-  { id: 'o4-mini',           name: 'o4-mini',            provider: 'openai'    as const, desc: 'Compact reasoning model' },
-]
+const PROVIDER_ORDER = ['anthropic', 'openai', 'huggingface-space'] as const
+const PROVIDER_LABELS: Record<ModelInfo['provider'], string> = {
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  'huggingface-space': 'HF Space',
+}
+
+function getProviderLabel(provider: ModelInfo['provider']): string {
+  return PROVIDER_LABELS[provider]
+}
 
 export function ModelPickerModal({ current, onSelect, onClose }: {
   current: string
   onSelect: (modelId: string) => void | Promise<void>
   onClose: () => void
 }) {
-  const [provider, setProvider] = useState<'anthropic' | 'openai'>(
-    MODEL_LIST.find(m => m.id === current)?.provider ?? 'anthropic'
-  )
+  const [models, setModels] = useState<ModelInfo[]>([])
+  const [loading, setLoading] = useState(false)
+  const [provider, setProvider] = useState<ModelInfo['provider']>('anthropic')
   const [selected, setSelected] = useState(current)
-  const models = MODEL_LIST.filter(m => m.provider === provider)
+
+  useEffect(() => {
+    let alive = true
+    const load = async () => {
+      setLoading(true)
+      try {
+        const res = await window.wos.fetchSavedModels()
+        if (!alive) return
+        if (res?.models?.length) {
+          setModels(res.models)
+          return
+        }
+        const fallback = await window.wos.getFallbackModels()
+        if (alive) setModels(fallback)
+      } catch {
+        const fallback = await window.wos.getFallbackModels().catch(() => [])
+        if (alive) setModels(fallback)
+      } finally {
+        if (alive) setLoading(false)
+      }
+    }
+    void load()
+    return () => { alive = false }
+  }, [])
+
+  useEffect(() => {
+    const currentProvider = models.find(model => model.id === current)?.provider
+    if (currentProvider) setProvider(currentProvider)
+  }, [current, models])
+
+  const providers = useMemo(() => {
+    const present = new Set(models.map(model => model.provider))
+    return PROVIDER_ORDER.filter(id => present.has(id))
+  }, [models])
+
+  useEffect(() => {
+    if (!providers.length) return
+    if (!providers.includes(provider)) setProvider(providers[0])
+  }, [provider, providers])
+
+  const providerModels = useMemo(
+    () => models.filter(model => model.provider === provider),
+    [models, provider],
+  )
 
   return (
     <div
@@ -54,7 +97,7 @@ export function ModelPickerModal({ current, onSelect, onClose }: {
 
         {/* Provider tabs */}
         <div className="flex gap-1 px-4 pt-3 pb-2">
-          {(['anthropic', 'openai'] as const).map(p => (
+          {providers.map(p => (
             <button
               key={p}
               onMouseDown={() => setProvider(p)}
@@ -65,14 +108,26 @@ export function ModelPickerModal({ current, onSelect, onClose }: {
                 border: '1px solid var(--border)',
               }}
             >
-              {p === 'anthropic' ? 'Anthropic' : 'OpenAI'}
+              {getProviderLabel(p)}
             </button>
           ))}
         </div>
 
         {/* Model list */}
         <div className="overflow-y-auto flex-1 px-2 pb-2">
-          {models.map(m => {
+          {loading && providerModels.length === 0 && (
+            <div className="px-3 py-4 flex items-center gap-2 text-xs" style={{ color: 'var(--muted-foreground)' }}>
+              <Loader2 size={12} className="animate-spin" /> Loading models…
+            </div>
+          )}
+          {!loading && providerModels.length === 0 && (
+            <div className="px-3 py-4 text-xs" style={{ color: 'var(--muted-foreground)' }}>
+              {provider === 'huggingface-space'
+                ? 'No HF Space models are saved yet. Add a Space in Settings → AI & Agents first.'
+                : 'No models available for this provider.'}
+            </div>
+          )}
+          {providerModels.map(m => {
             const isActive = selected === m.id
             return (
               <button
@@ -98,7 +153,9 @@ export function ModelPickerModal({ current, onSelect, onClose }: {
                       </span>
                     )}
                   </div>
-                  <div className="text-[11px] mt-0.5" style={{ color: 'var(--muted-foreground)' }}>{m.desc}</div>
+                  <div className="text-[11px] mt-0.5" style={{ color: 'var(--muted-foreground)' }}>
+                    {m.description ?? (m.provider === 'huggingface-space' ? 'Model served by a saved Hugging Face Space' : m.id)}
+                  </div>
                 </div>
               </button>
             )

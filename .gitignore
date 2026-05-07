@@ -62,9 +62,35 @@ Ref/
 wos-current.png
 
 # ------------------------------------------------------------
+# Local secrets / keys
+# ------------------------------------------------------------
+nv-key
+
+# ------------------------------------------------------------
 # Planning docs not intended for repo
 # ------------------------------------------------------------
 plan/
+
+# ------------------------------------------------------------
+# Local scratch files created during agent sessions
+# ------------------------------------------------------------
+.git_status*.txt
+.git_diff*.txt
+.git_log*.txt
+.sizes_*.json
+
+# Office temp/lock files
+~$*.docx
+
+# Python cache
+**/__pycache__/
+*.pyc
+
+# Large dataset backups (keep scripts + small reports tracked)
+training-data/backups/*.jsonl
+
+# Generated orchestration dataset artifacts (large; reproducible)
+training-data/orchestration/qwen3_orchestrator_*.jsonl
 
 # ------------------------------------------------------------
 # Swift helper build artifacts (generated from source in electron/main/transcription/swift-helper/)

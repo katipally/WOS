@@ -1,0 +1,5 @@
+﻿feat: hfspace integration, dataset hardening, and UX fixes
+
+- Add Hugging Face Space provider + Space deployment docs
+- Harden orchestration dataset generator/repair/build and add long-horizon patterns
+- Fix chat edit crash, selection/copy, thinking collapse, and token estimation
