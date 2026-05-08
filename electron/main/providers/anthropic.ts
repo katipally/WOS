@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import type {
   ModelProvider, ModelRequest, StreamEvent, ModelInfo
 } from './types'
-import { getDecryptedApiKey } from './keystore'
+import { getDecryptedApiKeyForInstance } from './keystore'
 import { enrichModel, modelSupportsReasoning } from './capabilities'
 
 function mapReasoningToThinkingBudget(effort: string | undefined, maxTokens: number): number | undefined {
@@ -38,11 +38,16 @@ function formatTools(tools: ModelRequest['tools']): Anthropic.Tool[] {
 }
 
 export class AnthropicProvider implements ModelProvider {
+  private readonly providerId: string
   private toolInputAccumulators: Map<number, string> = new Map()
   private toolInfoByIndex: Map<number, { id: string; name: string }> = new Map()
 
+  constructor(opts: { providerId?: string } = {}) {
+    this.providerId = opts.providerId ?? 'anthropic'
+  }
+
   async *stream(request: ModelRequest): AsyncGenerator<StreamEvent> {
-    const apiKey = request.apiKeyOverride ?? await getDecryptedApiKey('anthropic')
+    const apiKey = request.apiKeyOverride ?? await getDecryptedApiKeyForInstance(request.providerId ?? this.providerId)
     const client = new Anthropic({ apiKey })
     const maxTokens = request.maxTokens ?? 16384
     const supportsReasoning = modelSupportsReasoning(request.model)
@@ -149,10 +154,13 @@ export class AnthropicProvider implements ModelProvider {
   async fetchModels(apiKey: string): Promise<ModelInfo[]> {
     const client = new Anthropic({ apiKey })
     const models = await client.models.list()
-    return models.data.map(m => enrichModel({
-      id: m.id,
-      name: (m as { display_name?: string }).display_name ?? m.id,
-      provider: 'anthropic' as const,
+    return models.data.map(m => ({
+      ...enrichModel({
+        id: m.id,
+        name: (m as { display_name?: string }).display_name ?? m.id,
+      }),
+      providerId: this.providerId,
+      kind: 'anthropic' as const,
     }))
   }
 }

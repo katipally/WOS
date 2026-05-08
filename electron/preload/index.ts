@@ -88,18 +88,24 @@ contextBridge.exposeInMainWorld('wos', {
   getAgentSettings: () => ipcRenderer.invoke('settings:agents:get'),
   saveAgentSettings: (input: unknown) => ipcRenderer.invoke('settings:agents:save', input),
 
-  // API Keys
-  saveApiKey: (provider: 'openai' | 'anthropic', key: string) =>
-    ipcRenderer.invoke('settings:save-api-key', { provider, key }),
-  getApiKeysPresence: () => ipcRenderer.invoke('settings:get-api-keys-presence'),
-  testApiKey: (provider: 'openai' | 'anthropic', key: string) =>
-    ipcRenderer.invoke('settings:test-api-key', { provider, key }),
-
-  // Models
-  fetchModels: (provider: 'openai' | 'anthropic', apiKey: string) =>
-    ipcRenderer.invoke('models:fetch', { provider, apiKey }),
-  fetchSavedModels: () => ipcRenderer.invoke('models:fetch-saved'),
-  getFallbackModels: () => ipcRenderer.invoke('models:fallback'),
+  // Provider instances (multi-provider IPC surface)
+  providers: {
+    list: async () => {
+      const r = await ipcRenderer.invoke('providers:list')
+      return Array.isArray(r) ? r : (r?.providers ?? [])
+    },
+    add: (input: unknown) => ipcRenderer.invoke('providers:add', input),
+    update: (id: string, patch: unknown) => ipcRenderer.invoke('providers:update', { id, patch }),
+    remove: (id: string) => ipcRenderer.invoke('providers:remove', { id }),
+    refreshModels: (id: string) => ipcRenderer.invoke('providers:refresh-models', { id }),
+    test: (input: unknown) => ipcRenderer.invoke('providers:test', input),
+  },
+  models: {
+    list: async () => {
+      const r = await ipcRenderer.invoke('models:list')
+      return Array.isArray(r) ? r : (r?.models ?? [])
+    },
+  },
 
   // Database
   getConversations: () => ipcRenderer.invoke('db:conversations:list'),

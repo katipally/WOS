@@ -2,7 +2,7 @@ import OpenAI from 'openai'
 import type {
   ModelProvider, ModelRequest, StreamEvent, ModelInfo, TokenUsage
 } from './types'
-import { getDecryptedApiKey } from './keystore'
+import { getDecryptedApiKeyForInstance } from './keystore'
 import { enrichModel, modelSupportsReasoning } from './capabilities'
 
 function mapReasoningEffort(effort?: string): 'low' | 'medium' | 'high' {
@@ -71,10 +71,38 @@ function formatTools(tools: ModelRequest['tools']): OpenAI.Responses.Tool[] {
   }))
 }
 
+export interface OpenAIProviderOptions {
+  /** Provider instance id used for keystore lookup. Defaults to 'openai'
+   * (the legacy built-in instance) when omitted. */
+  providerId?: string
+  /** Override base URL for OpenAI-compatible endpoints. */
+  baseURL?: string
+  /** Extra headers (e.g. for routing/version pinning on compatible providers). */
+  customHeaders?: Record<string, string>
+}
+
 export class OpenAIProvider implements ModelProvider {
+  protected readonly providerId: string
+  protected readonly baseURL?: string
+  protected readonly customHeaders?: Record<string, string>
+
+  constructor(opts: OpenAIProviderOptions = {}) {
+    this.providerId = opts.providerId ?? 'openai'
+    this.baseURL = opts.baseURL
+    this.customHeaders = opts.customHeaders
+  }
+
+  protected buildClient(apiKey: string): OpenAI {
+    return new OpenAI({
+      apiKey,
+      ...(this.baseURL ? { baseURL: this.baseURL } : {}),
+      ...(this.customHeaders ? { defaultHeaders: this.customHeaders } : {}),
+    })
+  }
+
   async *stream(request: ModelRequest): AsyncGenerator<StreamEvent> {
-    const apiKey = request.apiKeyOverride ?? await getDecryptedApiKey('openai')
-    const client = new OpenAI({ apiKey })
+    const apiKey = request.apiKeyOverride ?? await getDecryptedApiKeyForInstance(request.providerId ?? this.providerId)
+    const client = this.buildClient(apiKey)
     const reasoningEffort = mapReasoningEffort(request.reasoningEffort)
 
     // Build input — prepend system as first user message if needed
@@ -170,7 +198,7 @@ export class OpenAIProvider implements ModelProvider {
   }
 
   async fetchModels(apiKey: string): Promise<ModelInfo[]> {
-    const client = new OpenAI({ apiKey })
+    const client = this.buildClient(apiKey)
     const models = await client.models.list()
     return models.data
       .filter(m =>
@@ -179,6 +207,10 @@ export class OpenAIProvider implements ModelProvider {
         !/(audio|realtime|image|embed|moderation|tts|transcribe|search|whisper|dall-e)/i.test(m.id)
       )
       .sort((a, b) => b.created - a.created)
-      .map(m => enrichModel({ id: m.id, name: m.id, provider: 'openai' as const }))
+      .map(m => ({
+        ...enrichModel({ id: m.id, name: m.id }),
+        providerId: this.providerId,
+        kind: 'openai' as const,
+      }))
   }
 }

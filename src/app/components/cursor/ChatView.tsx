@@ -12,7 +12,7 @@ import { blocksHaveInterruption } from '../../../lib/blockAccumulator'
 import { cn } from '../../../lib/utils'
 import { toast } from 'sonner'
 import { MicButton } from './MicButton'
-import { MODEL_LIST, ModelPickerModal } from './ModelPickerModal'
+import { ModelPickerModal } from './ModelPickerModal'
 
 const MODES = [
   { id: 'default', label: 'Default', icon: Shield, description: 'Asks for permission on each action' },

@@ -41,13 +41,14 @@ export async function initDatabase(): Promise<WosDb> {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL DEFAULT 'New Conversation',
       workspace_id TEXT,
-      model TEXT NOT NULL DEFAULT 'gpt-4o',
+      model TEXT NOT NULL DEFAULT '',
       mode TEXT NOT NULL DEFAULT 'default',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       token_count INTEGER NOT NULL DEFAULT 0,
       context_limit INTEGER NOT NULL DEFAULT 200000,
-      is_compacted INTEGER NOT NULL DEFAULT 0
+      is_compacted INTEGER NOT NULL DEFAULT 0,
+      agent_key TEXT
     );
 
     CREATE TABLE IF NOT EXISTS messages (
@@ -72,6 +73,37 @@ export async function initDatabase(): Promise<WosDb> {
       provider TEXT PRIMARY KEY,
       encrypted_key TEXT NOT NULL,
       iv TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    -- Multi-instance provider registry. Replaces the legacy api_keys table —
+    -- each row is one configured upstream (built-in OpenAI/Anthropic or any
+    -- number of OpenAI-compatible providers). Migration v4 backfills from
+    -- api_keys; legacy table is kept read-only for one release.
+    CREATE TABLE IF NOT EXISTS provider_instances (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      label TEXT NOT NULL,
+      base_url TEXT,
+      api_style TEXT,
+      encrypted_key TEXT NOT NULL,
+      iv TEXT NOT NULL,
+      models_json TEXT NOT NULL DEFAULT '[]',
+      capabilities_json TEXT,
+      custom_headers_json TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS custom_agents (
+      agent_key TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      system_prompt TEXT,
+      accepted_tags_json TEXT NOT NULL DEFAULT '[]',
+      defaults_json TEXT NOT NULL DEFAULT '{}',
+      surface_in_settings INTEGER NOT NULL DEFAULT 1,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -138,7 +170,6 @@ export async function initDatabase(): Promise<WosDb> {
 
     CREATE TABLE IF NOT EXISTS agent_settings (
       agent_key TEXT PRIMARY KEY,
-      inherit_from TEXT,
       model TEXT,
       mode TEXT,
       system_prompt TEXT,
@@ -527,12 +558,14 @@ export async function initDatabase(): Promise<WosDb> {
   // installs that pre-date the projects feature.
   tryExec('ALTER TABLE app_context_snapshots ADD COLUMN project_id TEXT')
   tryExec('ALTER TABLE app_context_snapshots ADD COLUMN resource_ref TEXT')
+  // Conversations: agent_key column for per-conversation persona selection
+  // (added in v7; ALTER guarded for installs that pre-date the column).
+  tryExec('ALTER TABLE conversations ADD COLUMN agent_key TEXT')
   runMigrations(_sqlDb)
 
   // Seed default settings on first run
   const now = Date.now()
   const defaults = [
-    { key: 'defaultModel', value: '""' },
     { key: 'reasoningEffort', value: '"medium"' },
     { key: 'defaultMode', value: '"default"' },
     { key: 'theme', value: '"dark"' },
@@ -546,15 +579,19 @@ export async function initDatabase(): Promise<WosDb> {
   }
   const insertAgent = _sqlDb.prepare(
     `INSERT OR IGNORE INTO agent_settings
-      (agent_key, inherit_from, model, mode, system_prompt, config_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      (agent_key, model, mode, system_prompt, config_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   )
-  insertAgent.run('wos', null, null, null, null, JSON.stringify({}), now, now)
-  insertAgent.run('meeting', 'wos', null, null, null, JSON.stringify({
+  insertAgent.run('wos', null, null, null, JSON.stringify({}), now, now)
+  insertAgent.run('meeting', null, null, null, JSON.stringify({
     liveSource: 'captions',
     autoSummarize: true,
-    defaultSlackChannel: '',
   }), now, now)
+  insertAgent.run('projects', null, null, null, JSON.stringify({
+    autoSummarize: true,
+    summaryStaleHours: 6,
+  }), now, now)
+  insertAgent.run('automation', null, null, null, JSON.stringify({}), now, now)
 
   // Cleanly close the native handle when the app exits so WAL is checkpointed.
   app.on('before-quit', () => {

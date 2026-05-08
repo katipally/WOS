@@ -90,14 +90,23 @@ export function registerAutomationsHandlers(): void {
       .map(c => appById.get(c.appId)?.name ?? c.appId)
     const allConnectedIds = new Set(conns.filter(c => c.enabled).map(c => c.appId))
 
-    // Resolve model + API key (same fallback chain as runner.ts)
+    // Resolve model + API key (per-persona override → wos → defaultModel)
     let model = ''
     let apiKeyOverride: string | undefined
     try {
-      const agent = await resolveAgent('wos')
-      model = agent.model ?? ''
-      apiKeyOverride = agent.apiKeyOverride
-    } catch { /* no model configured */ }
+      const spec = await resolveAgent('automation')
+      if (spec.model) {
+        model = spec.model
+        apiKeyOverride = spec.apiKeyOverride
+      }
+    } catch { /* fall through */ }
+    if (!model) {
+      try {
+        const agent = await resolveAgent('wos')
+        model = agent.model ?? ''
+        apiKeyOverride = agent.apiKeyOverride
+      } catch { /* no model configured */ }
+    }
 
     if (!model) {
       const db = getDb()

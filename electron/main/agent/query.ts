@@ -108,6 +108,12 @@ export interface QueryOptions {
   contextLimit?: number
   /** Model to use for intent classification pre-call. Defaults to claude-haiku-4-5-20251001. */
   intentModel?: string
+  /** API key override for the intent model. Defaults to the main agent's apiKeyOverride. */
+  intentApiKeyOverride?: string
+  /** Optional model used by the auto-compaction pass. Defaults to the main agent's model. */
+  compactionModel?: string
+  /** API key override for the compaction model. Defaults to the main agent's apiKeyOverride. */
+  compactionApiKeyOverride?: string
   /** When true, skip the intent pre-call (subagents, plan mode, etc.). */
   skipIntent?: boolean
 }
@@ -184,7 +190,7 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
     model, messages, userMessage, workspacePath, mode, reasoningEffort,
     signal, permissionStore, onPermissionRequest, onAskUser, maxDepth = 0,
     systemPromptOverride, systemPromptCustom, systemPromptAppend, apiKeyOverride, onEvent,
-    agentKey, conversationId, contextLimit, intentModel, skipIntent,
+    agentKey, conversationId, contextLimit, intentModel, intentApiKeyOverride, compactionModel, compactionApiKeyOverride, skipIntent,
   } = options
 
   const effectiveContextLimit = contextLimit ?? getContextWindow(model) ?? 200_000
@@ -195,12 +201,14 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
   if (!skipIntent && maxDepth === 0 && mode !== 'plan' && !process.env.WOS_E2E_AGENT_SCRIPT) {
     try {
       const { getAllTools: _getAllToolsForIntent } = await import('../tools')
-      const allToolNames = _getAllToolsForIntent().map(t => t.name)
-      const groups = extractToolGroups(allToolNames)
+      const allTools = _getAllToolsForIntent()
+      const allToolNames = allTools.map(t => t.name)
+      const groups = extractToolGroups(allTools)
       if (groups.length > 0) {
         const effectiveIntentModel = intentModel ?? 'claude-haiku-4-5-20251001'
+        const effectiveIntentKey = intentApiKeyOverride ?? apiKeyOverride
         const intent = await analyzeIntent(
-          userMessage, groups, effectiveIntentModel, apiKeyOverride, signal
+          userMessage, groups, effectiveIntentModel, effectiveIntentKey, signal
         )
         // Only filter when confidence is high enough — otherwise include all tools
         if (intent.confidence >= 0.6 && intent.toolFilter.length > 0) {
@@ -280,8 +288,9 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
     if (signal?.aborted) return
 
     const { getAllTools } = await import('../tools')
+    const { filterToolsForAgent } = await import('./agentDefs')
     const allToolsRaw = getAllTools()
-    const allTools = agentDef ? agentDef.toolFilter(allToolsRaw) : allToolsRaw
+    const allTools = filterToolsForAgent(agentDef, allToolsRaw)
 
     // Apply intent-based tool filter when available and confident enough.
     // Always include builtin tools regardless of filter (they are safe defaults).
@@ -319,7 +328,9 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
             yield { type: 'compact_complete', summary: `Pruned ${history.length - pruned.length} old messages to stay within context limit.` }
           } else {
             const abortSignal = signal ?? new AbortController().signal
-            const { summarized, summary } = await summarizeHistory(history, model, abortSignal, apiKeyOverride)
+            const compactModel = compactionModel || model
+            const compactKey = compactionApiKeyOverride ?? apiKeyOverride
+            const { summarized, summary } = await summarizeHistory(history, compactModel, abortSignal, compactKey)
             history.length = 0
             history.push(...summarized)
             yield { type: 'compact_complete', summary }

@@ -62,8 +62,13 @@ export async function runAutomation(
   const scratchDir = createRunSandbox(`auto-${Date.now()}`)
   const runId = audit.startRun(automation.id, trigger ?? null, scratchDir)
 
-  // Resolve model from the default WOS agent settings.
-  const agent = await resolveAgent('wos')
+  // Resolve agent settings — prefer the dedicated automation agent, then fall
+  // back to the WOS agent (model + system prompt). This lets users control
+  // automation behavior independently in Settings → Agents → Automation.
+  let agent = await resolveAgent('automation')
+  if (!agent.model || !agent.model.trim()) {
+    agent = await resolveAgent('wos')
+  }
   let model = agent.model
   if (!model || !model.trim()) {
     const db = getDb()
@@ -102,7 +107,7 @@ export async function runAutomation(
   // Deliberately does not include the WOS chat agent's routing/subagent/creation instructions.
   // Inspired by OpenClaw's cron execution context: the agent executes the stored task directly —
   // it never creates new automations, never asks the user, just does the work.
-  const autonomousSystemPrompt = [
+  const baseSystemPrompt = [
     'You are an autonomous task executor. You are running as a scheduled or triggered automation — no user is present.',
     `Connected apps: ${connectedApps}`,
     `Available tools: ${allToolNames}`,
@@ -116,6 +121,9 @@ export async function runAutomation(
     '5. If a required app is disconnected, say which app is missing and stop gracefully.',
     '6. Be concise. Report what you did and the outcome.',
   ].join('\n')
+  const autonomousSystemPrompt = agent.systemPrompt && agent.systemPrompt.trim()
+    ? `${baseSystemPrompt}\n\n## Additional instructions\n${agent.systemPrompt.trim()}`
+    : baseSystemPrompt
 
   // Build full prompt: intent + runtime context blocks for adaptive execution
   const triggerBlock = trigger

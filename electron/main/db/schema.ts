@@ -12,13 +12,16 @@ export const conversations = sqliteTable('conversations', {
   id: text('id').primaryKey(),
   title: text('title').notNull().default('New Conversation'),
   workspaceId: text('workspace_id'),
-  model: text('model').notNull().default('gpt-4o'),
+  model: text('model').notNull().default(''),
   mode: text('mode').notNull().default('default'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
   tokenCount: integer('token_count').notNull().default(0),
   contextLimit: integer('context_limit').notNull().default(200000),
   isCompacted: integer('is_compacted', { mode: 'boolean' }).notNull().default(false),
+  // The agent persona (wos | meeting | projects | <custom>) used for this conversation.
+  // Falls back to 'wos' when null (added in migration v7).
+  agentKey: text('agent_key'),
 })
 
 export const messages = sqliteTable('messages', {
@@ -118,14 +121,54 @@ export const rules = sqliteTable('rules', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 })
 
-// Agent settings — per-agent model/mode/system-prompt overrides + per-agent API keys
+// Agent settings — per-agent free-form configuration. The shape of `configJson`
+// is defined by each agentDef's `settingsSchema`; the runner merges `defaults`
+// from the agentDef with this row at resolve time. There is no inheritance.
+//
+// `model`, `mode`, and `systemPrompt` are top-level columns for cheap lookup;
+// everything else lives inside `configJson`.
 export const agentSettings = sqliteTable('agent_settings', {
-  agentKey: text('agent_key').primaryKey(), // 'wos' | 'meeting' | etc
-  inheritFrom: text('inherit_from'), // fallback agent if not configured
-  model: text('model'), // override model; null = inherit from global
-  mode: text('mode'), // override mode; null = inherit from global
-  systemPrompt: text('system_prompt'), // override system prompt; null = inherit
-  configJson: text('config_json', { mode: 'json' }), // {openaiApiKey?, anthropicApiKey?, ...}
+  agentKey: text('agent_key').primaryKey(),
+  model: text('model'),
+  mode: text('mode'),
+  systemPrompt: text('system_prompt'),
+  configJson: text('config_json', { mode: 'json' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+})
+
+// Provider instances — one row per configured upstream model provider. Built-in
+// 'openai' and 'anthropic' rows are seeded from legacy api_keys on first boot
+// (migration v4). Users can also add multiple OpenAI-compatible instances
+// (Together, Groq, OpenRouter, Ollama, vLLM, …) each with their own baseURL,
+// custom headers, and probed apiStyle ('responses' | 'chat-completions').
+export const providerInstances = sqliteTable('provider_instances', {
+  id: text('id').primaryKey(), // uuid; also stable key for keystore lookups
+  kind: text('kind').notNull(), // 'openai' | 'anthropic' | 'openai-compatible'
+  label: text('label').notNull(),
+  baseUrl: text('base_url'), // null for built-in providers
+  apiStyle: text('api_style'), // 'responses' | 'chat-completions' (probed)
+  encryptedKey: text('encrypted_key').notNull(),
+  iv: text('iv').notNull(),
+  modelsJson: text('models_json', { mode: 'json' }).notNull().default('[]'),
+  capabilitiesJson: text('capabilities_json', { mode: 'json' }), // optional probed caps
+  customHeadersJson: text('custom_headers_json', { mode: 'json' }),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+})
+
+// User-defined agents (added in migration v6). Built-in agents (wos, meeting,
+// projects, intent, …) live in code under electron/main/agent/agentDefs/*.
+// Custom rows let users define new personas — name + acceptedTags + defaults +
+// systemPrompt — without code changes.
+export const customAgents = sqliteTable('custom_agents', {
+  agentKey: text('agent_key').primaryKey(),
+  label: text('label').notNull(),
+  systemPrompt: text('system_prompt'),
+  acceptedTagsJson: text('accepted_tags_json', { mode: 'json' }).notNull().default('[]'),
+  defaultsJson: text('defaults_json', { mode: 'json' }).notNull().default('{}'),
+  surfaceInSettings: integer('surface_in_settings', { mode: 'boolean' }).notNull().default(true),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 })

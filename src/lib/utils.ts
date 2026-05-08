@@ -25,12 +25,6 @@ export function formatRelativeTime(date: Date): string {
   return new Date(date).toLocaleDateString()
 }
 
-export function getProviderFromModel(model: string): 'openai' | 'anthropic' | 'unknown' {
-  if (model.startsWith('claude')) return 'anthropic'
-  if (model.startsWith('gpt-') || model.startsWith('o') || model.startsWith('chatgpt')) return 'openai'
-  return 'unknown'
-}
-
 export function truncate(str: string, max: number): string {
   if (str.length <= max) return str
   return str.slice(0, max) + '…'

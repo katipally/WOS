@@ -64,7 +64,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   streams: {},
   activeBranches: {},
   currentMode: 'default',
-  currentModel: 'gpt-4o',
+  currentModel: '',
   sessionTokens: { input: 0, output: 0 },
   sendToken: 0,
   loadToken: 0,

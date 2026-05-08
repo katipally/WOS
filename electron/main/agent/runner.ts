@@ -219,9 +219,13 @@ export class AgentRunner {
     let memoryEnabled = true
 
     try {
-      agentSettings = await resolveAgent('wos')
-      const intentModelRow = db.select().from(schema.settings).where(eq(schema.settings.key, 'intentModel')).get()
-      const intentModel = (intentModelRow?.value as string)?.replace(/^"|"$/g, '') || 'claude-haiku-4-5-20251001'
+      agentSettings = await resolveAgent(conv.agentKey ?? 'wos')
+      const intentAgentSettings = await resolveAgent('intent').catch(() => null)
+      const intentModel = (intentAgentSettings?.model as string | undefined) || 'claude-haiku-4-5-20251001'
+      const intentApiKeyOverride = intentAgentSettings?.apiKeyOverride
+      const compactionAgentSettings = await resolveAgent('compaction').catch(() => null)
+      const compactionModel = compactionAgentSettings?.model as string | undefined
+      const compactionApiKeyOverride = compactionAgentSettings?.apiKeyOverride
       const intentEnabledRow = db.select().from(schema.settings).where(eq(schema.settings.key, 'intentEnabled')).get()
       const intentEnabled = intentEnabledRow ? (intentEnabledRow.value as boolean) !== false : true
       const memoryEnabledRow = db.select().from(schema.settings).where(eq(schema.settings.key, 'memoryEnabled')).get()
@@ -259,6 +263,9 @@ export class AgentRunner {
         conversationId,
         contextLimit,
         intentModel,
+        intentApiKeyOverride,
+        compactionModel,
+        compactionApiKeyOverride,
         skipIntent: !intentEnabled,
         systemPromptAppend: appendContext,
       })) {
@@ -283,8 +290,12 @@ export class AgentRunner {
           .filter(b => b.type === 'text')
           .map(b => (typeof b.content === 'string' ? b.content : ''))
           .join('')
-        const apiKeyOverride = agentSettings?.apiKeyOverride
-        extractAndStoreFacts(fullUserMessage, assistantText, conv.model, apiKeyOverride)
+        ;(async () => {
+          const fa = await resolveAgent('factExtractor').catch(() => null)
+          const fxModel = (fa?.model as string | undefined) || conv.model
+          const fxKey = fa?.apiKeyOverride ?? agentSettings?.apiKeyOverride
+          return extractAndStoreFacts(fullUserMessage, assistantText, fxModel, fxKey)
+        })()
           .then(() => pruneOldMemories(1000))
           .catch(() => { /* non-fatal */ })
       }
@@ -487,9 +498,13 @@ export class AgentRunner {
     let memEnabled2 = true
 
     try {
-      agentSettings2 = await resolveAgent('wos')
-      const intentModelRow2 = db.select().from(schema.settings).where(eq(schema.settings.key, 'intentModel')).get()
-      const intentModel2 = (intentModelRow2?.value as string)?.replace(/^"|"$/g, '') || 'claude-haiku-4-5-20251001'
+      agentSettings2 = await resolveAgent(conv.agentKey ?? 'wos')
+      const intentAgentSettings2 = await resolveAgent('intent').catch(() => null)
+      const intentModel2 = (intentAgentSettings2?.model as string | undefined) || 'claude-haiku-4-5-20251001'
+      const intentApiKeyOverride2 = intentAgentSettings2?.apiKeyOverride
+      const compactionAgentSettings2 = await resolveAgent('compaction').catch(() => null)
+      const compactionModel2 = compactionAgentSettings2?.model as string | undefined
+      const compactionApiKeyOverride2 = compactionAgentSettings2?.apiKeyOverride
       const intentEnabledRow2 = db.select().from(schema.settings).where(eq(schema.settings.key, 'intentEnabled')).get()
       const intentEnabled2 = intentEnabledRow2 ? (intentEnabledRow2.value as boolean) !== false : true
       const memEnabledRow2 = db.select().from(schema.settings).where(eq(schema.settings.key, 'memoryEnabled')).get()
@@ -524,6 +539,9 @@ export class AgentRunner {
         conversationId,
         contextLimit,
         intentModel: intentModel2,
+        intentApiKeyOverride: intentApiKeyOverride2,
+        compactionModel: compactionModel2,
+        compactionApiKeyOverride: compactionApiKeyOverride2,
         skipIntent: !intentEnabled2,
         systemPromptAppend: appendContext2,
       })) {
@@ -547,7 +565,12 @@ export class AgentRunner {
           .filter(b => b.type === 'text')
           .map(b => (typeof b.content === 'string' ? b.content : ''))
           .join('')
-        extractAndStoreFacts(userMessage, assistantText2, conv.model, agentSettings2?.apiKeyOverride)
+        ;(async () => {
+          const fa = await resolveAgent('factExtractor').catch(() => null)
+          const fxModel = (fa?.model as string | undefined) || conv.model
+          const fxKey = fa?.apiKeyOverride ?? agentSettings2?.apiKeyOverride
+          return extractAndStoreFacts(userMessage, assistantText2, fxModel, fxKey)
+        })()
           .then(() => pruneOldMemories(1000))
           .catch(() => { /* non-fatal */ })
       }

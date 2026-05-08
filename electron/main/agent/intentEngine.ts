@@ -102,25 +102,16 @@ Classify the intent and return JSON only.`
 
 /**
  * Extract dynamic tool group names from the full tool list.
- * Returns prefixes like ['slack', 'github', 'mcp_linear', 'plugin_linear-integration'] etc.
- * Plugin tools use the form <pluginId>__<toolName> — double underscore, no 'mcp__' prefix.
- * MCP tools use the form mcp__<serverId>__<toolName>.
+ * Reads `Tool.tags` and returns the unique set of "interesting" tags
+ * (apps:slack, mcp, plugins, meetings, projects, ...). The intent
+ * classifier uses this list to decide which dynamic categories matter
+ * for the current message — purely advisory.
  */
-export function extractToolGroups(toolNames: string[]): string[] {
+export function extractToolGroups(tools: Array<{ name: string; tags?: string[] }>): string[] {
   const groups = new Set<string>()
-  for (const name of toolNames) {
-    if (name.startsWith('Slack')) groups.add('slack')
-    else if (name.startsWith('GitHub')) groups.add('github')
-    else if (name.startsWith('Google')) groups.add('google')
-    else if (name.startsWith('Jira')) groups.add('jira')
-    else if (name.startsWith('mcp__')) {
-      const parts = name.split('__')
-      if (parts[1]) groups.add(`mcp_${parts[1]}`)
-    } else if (name.includes('__') && !name.startsWith('mcp__')) {
-      // Plugin tool: <pluginId>__<toolName>
-      const pluginId = name.split('__')[0]
-      if (pluginId) groups.add(`plugin_${pluginId}`)
-    }
+  for (const t of tools) {
+    if (!t.tags || t.tags.length === 0) continue
+    for (const tag of t.tags) groups.add(tag)
   }
   return [...groups]
 }

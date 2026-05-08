@@ -23,49 +23,34 @@ describe('resolveAgent', () => {
   it('returns the meeting agent with seeded defaults', async () => {
     const agent = await resolveAgent('meeting')
     expect(agent.agentKey).toBe('meeting')
-    expect(agent.inheritFrom).toBe('wos')
     expect(agent.config.liveSource).toBe('captions')
     expect(agent.config.autoSummarize).toBe(true)
     expect(agent.systemPrompt).toBe(DEFAULT_MEETING_SYSTEM_PROMPT)
   })
 
-  it('inherits parent (wos) model when meeting row has none', async () => {
-    const db = getDb()
-    db.update(schema.agentSettings)
-      .set({ model: 'gpt-4o-mini' })
-      .where(((await import('drizzle-orm')).eq)(schema.agentSettings.agentKey, 'wos'))
-      .run()
-    const agent = await resolveAgent('meeting')
-    expect(agent.model).toBe('gpt-4o-mini')
-  })
-
-  it('detects an inheritance cycle and throws', async () => {
+  it('uses the model stored on the agent row, with no cross-agent inheritance', async () => {
     const db = getDb()
     const now = new Date()
     db.insert(schema.agentSettings)
       .values({
-        agentKey: 'cycle-a',
-        inheritFrom: 'cycle-b',
-        model: null,
+        agentKey: 'wos',
+        model: 'gpt-4o-mini',
         mode: null,
         systemPrompt: null,
         configJson: {},
         createdAt: now,
         updatedAt: now,
       })
-      .run()
-    db.insert(schema.agentSettings)
-      .values({
-        agentKey: 'cycle-b',
-        inheritFrom: 'cycle-a',
-        model: null,
-        mode: null,
-        systemPrompt: null,
-        configJson: {},
-        createdAt: now,
-        updatedAt: now,
+      .onConflictDoUpdate({
+        target: schema.agentSettings.agentKey,
+        set: { model: 'gpt-4o-mini', updatedAt: now },
       })
       .run()
-    await expect(resolveAgent('cycle-a')).rejects.toThrow(/cycle/i)
+    const wos = await resolveAgent('wos')
+    expect(wos.model).toBe('gpt-4o-mini')
+    // meeting agent has no row override → resolves to its own (empty) default,
+    // not the wos row's model.
+    const meeting = await resolveAgent('meeting')
+    expect(meeting.model).not.toBe('gpt-4o-mini')
   })
 })

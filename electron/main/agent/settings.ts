@@ -1,8 +1,8 @@
 import { eq } from 'drizzle-orm'
 import { decryptApiKey } from '../crypto'
 import { getDb, schema } from '../db'
-import { getDecryptedApiKeyOrNull } from '../providers/keystore'
-import { getProviderNameForModel } from '../providers'
+import { getDecryptedApiKeyForInstanceOrNull } from '../providers/keystore'
+import { listProviderInstances } from '../providers'
 import { getAgentDef } from './agentDefs'
 import { DEFAULT_MEETING_SYSTEM_PROMPT } from './agentDefs/meeting'
 
@@ -12,7 +12,8 @@ export type AgentKey = 'wos' | 'meeting' | string
 
 export interface AgentRuntimeSettings {
   agentKey: string
-  inheritFrom: string | null
+  /** Resolved model id. Empty string means "no model selected; UI should
+   * force the user to pick one before any stream call." */
   model: string
   mode: 'default' | 'plan' | 'yolo'
   systemPrompt: string
@@ -21,31 +22,16 @@ export interface AgentRuntimeSettings {
 }
 
 export interface AgentConfig {
-  // v1 ships captions-only. The other values are kept as types so existing
-  // DB rows from earlier builds still parse — they're treated as 'captions'
-  // by liveSession (see notes there).
-  liveSource?: 'captions' | 'captions-webrtc' | 'webrtc'
+  liveSource?: 'captions'
   autoSummarize?: boolean
-  defaultSlackChannel?: string
+  // Free-form per-agent settings keyed by agentDef.settingsSchema. The
+  // *EncryptedKeystore-style fields below are kept only to decrypt legacy
+  // installs (pre-multi-instance); new code should never write them.
   openaiApiKeyEncrypted?: string
   openaiApiKeyIv?: string
   anthropicApiKeyEncrypted?: string
   anthropicApiKeyIv?: string
   [key: string]: unknown
-}
-
-export const DEFAULT_MEETING_SYSTEM_PROMPT_LOCAL = DEFAULT_MEETING_SYSTEM_PROMPT
-// Re-exported above for backward compat with callers/tests that imported
-// DEFAULT_MEETING_SYSTEM_PROMPT from './settings'.
-
-function parseSettingValue(value: unknown): string {
-  if (typeof value !== 'string') return ''
-  try {
-    const parsed = JSON.parse(value)
-    return typeof parsed === 'string' ? parsed : ''
-  } catch {
-    return value.replace(/^"|"$/g, '')
-  }
 }
 
 function parseConfig(value: unknown): AgentConfig {
@@ -60,80 +46,69 @@ function parseConfig(value: unknown): AgentConfig {
   }
 }
 
-function getGlobalDefaults() {
-  const db = getDb()
-  const modelRow = db.select().from(schema.settings).where(eq(schema.settings.key, 'defaultModel')).get()
-  const modeRow = db.select().from(schema.settings).where(eq(schema.settings.key, 'defaultMode')).get()
-  const model = parseSettingValue(modelRow?.value) || ''
-  const mode = parseSettingValue(modeRow?.value) || 'default'
-  return {
-    model,
-    mode: (mode === 'plan' || mode === 'yolo' ? mode : 'default') as 'default' | 'plan' | 'yolo',
-  }
-}
-
-function decryptAgentKey(config: AgentConfig, provider: 'openai' | 'anthropic'): string | undefined {
-  const encrypted = provider === 'openai' ? config.openaiApiKeyEncrypted : config.anthropicApiKeyEncrypted
-  const iv = provider === 'openai' ? config.openaiApiKeyIv : config.anthropicApiKeyIv
+/** Decrypt a legacy in-config key, if any. New installs won't hit this. */
+function decryptLegacyAgentKey(config: AgentConfig, kind: 'openai' | 'anthropic'): string | undefined {
+  const encrypted = kind === 'openai' ? config.openaiApiKeyEncrypted : config.anthropicApiKeyEncrypted
+  const iv = kind === 'openai' ? config.openaiApiKeyIv : config.anthropicApiKeyIv
   if (!encrypted || !iv) return undefined
-  return decryptApiKey(String(encrypted), String(iv))
+  try { return decryptApiKey(String(encrypted), String(iv)) } catch { return undefined }
 }
 
-export async function resolveAgent(agentKey: AgentKey): Promise<AgentRuntimeSettings> {
-  const db = getDb()
-  const defaults = getGlobalDefaults()
-  const chain: Array<typeof schema.agentSettings.$inferSelect> = []
-  const seen = new Set<string>()
-  let current: string | null = agentKey
-
-  while (current && !seen.has(current)) {
-    seen.add(current)
-    const row = db.select().from(schema.agentSettings).where(eq(schema.agentSettings.agentKey, current)).get()
-    if (row) {
-      chain.unshift(row)
-      current = row.inheritFrom
-    } else {
-      current = null
+/** Find the provider instance that lists `model` and return its decrypted
+ * API key, if any. Used so sub-agents/intent calls inherit the right key. */
+async function resolveApiKeyForModel(model: string): Promise<string | undefined> {
+  if (!model) return undefined
+  for (const inst of listProviderInstances()) {
+    if (!inst.enabled) continue
+    if (inst.models.some(m => m.id === model)) {
+      const key = await getDecryptedApiKeyForInstanceOrNull(inst.id)
+      if (key) return key
     }
   }
-
-  if (current && seen.has(current)) {
-    throw new Error(`Agent settings inheritance cycle detected at "${current}"`)
+  // Fallback: try built-in instance ids by prefix.
+  if (model.startsWith('claude')) {
+    const key = await getDecryptedApiKeyForInstanceOrNull('anthropic')
+    if (key) return key
   }
+  if (model.startsWith('gpt-') || /^o\d/.test(model) || model.startsWith('chatgpt')) {
+    const key = await getDecryptedApiKeyForInstanceOrNull('openai')
+    if (key) return key
+  }
+  return undefined
+}
 
-  let model = defaults.model
-  let mode = defaults.mode
+/**
+ * Resolve runtime settings for an agent by merging (in order):
+ *   1. agentDef.defaults  — declared by the registered AgentDef
+ *   2. row.configJson      — what the user saved in Settings → Agents
+ *   3. row.systemPrompt    — only used if the user explicitly overrode it
+ *
+ * No inheritance walking. agentDef.acceptedTags decides tool exposure later.
+ */
+export async function resolveAgent(agentKey: AgentKey): Promise<AgentRuntimeSettings> {
+  const db = getDb()
   const def = getAgentDef(agentKey)
-  let systemPrompt = def?.systemPrompt ?? ''
-  let config: AgentConfig = {}
-  let inheritFrom: string | null = def?.defaultInheritFrom ?? null
+  const row = db.select().from(schema.agentSettings).where(eq(schema.agentSettings.agentKey, agentKey)).get()
 
-  for (const row of chain) {
-    inheritFrom = row.inheritFrom
-    const rowConfig = parseConfig(row.configJson)
-    config = { ...config, ...rowConfig }
-    if (row.model) model = row.model
-    if (row.mode === 'default' || row.mode === 'plan' || row.mode === 'yolo') mode = row.mode
-    if (row.systemPrompt) systemPrompt = row.systemPrompt
-  }
+  const defaults: AgentConfig = (def?.defaults as AgentConfig | undefined) ?? {}
+  const stored = parseConfig(row?.configJson)
+  const config: AgentConfig = { ...defaults, ...stored }
 
-  if (def?.defaultConfig) {
-    config = { ...def.defaultConfig, ...config }
-  }
+  const model = (typeof config.model === 'string' && config.model) || row?.model || ''
+  const modeRaw = (typeof config.mode === 'string' && config.mode) || row?.mode || 'default'
+  const mode = (modeRaw === 'plan' || modeRaw === 'yolo' ? modeRaw : 'default') as 'default' | 'plan' | 'yolo'
+  const systemPrompt = (typeof config.systemPrompt === 'string' && config.systemPrompt)
+    || row?.systemPrompt
+    || def?.systemPrompt
+    || ''
 
-  if (!model) model = defaults.model
-  const provider = getProviderNameForModel(model)
-  const apiKeyOverride = decryptAgentKey(config, provider) ?? await getDecryptedApiKeyOrNull(provider) ?? undefined
+  // Prefer a key resolved against the chosen model's provider instance; fall
+  // back to legacy in-config keys for upgrade scenarios.
+  const apiKeyOverride =
+    (await resolveApiKeyForModel(model))
+    ?? decryptLegacyAgentKey(config, model.startsWith('claude') ? 'anthropic' : 'openai')
 
-  return {
-    agentKey,
-    inheritFrom,
-    model,
-    mode,
-    systemPrompt,
-    config,
-    apiKeyOverride,
-  }
+  return { agentKey, model, mode, systemPrompt, config, apiKeyOverride }
 }
 
 export function redactAgentConfig(config: AgentConfig): AgentConfig & { openaiApiKeySet?: boolean; anthropicApiKeySet?: boolean } {

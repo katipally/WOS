@@ -277,7 +277,14 @@ export function buildConnectedAppTools(): Tool[] {
     const app = getApp(c.appId)
     if (!app) continue
     try {
-      out.push(...app.buildTools(c.creds))
+      const appTag = `apps:${c.appId}`
+      for (const t of app.buildTools(c.creds)) {
+        const existingTags = Array.isArray(t.tags) ? t.tags : []
+        out.push({
+          ...t,
+          tags: existingTags.includes(appTag) ? existingTags : [...existingTags, appTag, 'apps'],
+        })
+      }
     } catch (err) {
       console.error(`[apps] failed to build tools for ${c.appId}`, err)
     }

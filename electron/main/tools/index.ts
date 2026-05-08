@@ -54,6 +54,11 @@ export interface Tool {
   inputSchema: object
   /** When true, this tool only reads data and does not modify state. */
   readOnly?: boolean
+  /** Capability tags consumed by AgentDef.acceptedTags filtering.
+   *  Examples: "meetings", "projects", "mcp", "plugins", "apps:slack",
+   *  "apps:github", etc. Tools without tags are universal — every agent
+   *  sees them. */
+  tags?: string[]
   execute(input: unknown, context: ToolContext): Promise<ToolResult>
 }
 
@@ -94,6 +99,15 @@ function ensureValidNames(tools: Tool[], origin: string): Tool[] {
   })
 }
 
+function withTags(tools: Tool[], ...tags: string[]): Tool[] {
+  return tools.map(t => {
+    const existing = Array.isArray(t.tags) ? t.tags : []
+    const merged = [...existing]
+    for (const tag of tags) if (!merged.includes(tag)) merged.push(tag)
+    return { ...t, tags: merged }
+  })
+}
+
 /**
  * Dynamically-composed tool registry. App tools (Slack), MCP proxies, and
  * Skills/Rules helpers are added here at agent-loop start time — that way
@@ -105,13 +119,13 @@ export function getAllTools(): Tool[] {
     readSkillTool,
     readAppSkillTool,
     readRuleTool,
-    ...ensureValidNames(CONTEXT_TOOLS, 'context'),
-    ...ensureValidNames(meetingTools, 'meetings'),
-    ...ensureValidNames(automationTools, 'automations'),
-    ...ensureValidNames(projectTools, 'projects'),
+    ...ensureValidNames(withTags(CONTEXT_TOOLS, 'context'), 'context'),
+    ...ensureValidNames(withTags(meetingTools, 'meetings'), 'meetings'),
+    ...ensureValidNames(withTags(automationTools, 'automations'), 'automations'),
+    ...ensureValidNames(withTags(projectTools, 'projects'), 'projects'),
     ...ensureValidNames(buildConnectedAppTools(), 'apps'),
-    ...ensureValidNames(buildMcpTools(), 'mcp'),
-    ...ensureValidNames(buildPluginToolsSync(), 'plugins'),
+    ...ensureValidNames(withTags(buildMcpTools(), 'mcp'), 'mcp'),
+    ...ensureValidNames(withTags(buildPluginToolsSync(), 'plugins'), 'plugins'),
   ]
 }
 

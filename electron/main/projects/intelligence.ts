@@ -44,6 +44,10 @@ async function pickModel(projectModelOverride: string | null): Promise<{ model: 
     return { model: projectModelOverride }
   }
   try {
+    const intel = await resolveAgent('projectsIntelligence')
+    if (intel.model) return { model: intel.model, apiKeyOverride: intel.apiKeyOverride }
+  } catch { /* ignore */ }
+  try {
     const agent = await resolveAgent('wos')
     if (agent.model) return { model: agent.model, apiKeyOverride: agent.apiKeyOverride }
   } catch { /* ignore */ }

@@ -112,7 +112,10 @@ export interface Workspace {
 export interface ModelInfo {
   id: string
   name: string
-  provider: 'openai' | 'anthropic'
+  /** Provider instance id (uuid). May be a built-in id like 'anthropic' or 'openai'. */
+  providerId: string
+  /** API style of the provider instance. */
+  kind: 'openai' | 'anthropic' | 'openai-compatible'
   contextWindow?: number
   supportsReasoning?: boolean
   supportsVision?: boolean
@@ -131,7 +134,6 @@ export interface Settings {
   defaultMode: AgentMode
   theme: 'dark' | 'light' | 'system'
   activeWorkspaceId: string | null
-  intentModel: string
   intentEnabled: boolean
   maxSubagentDepth: number
   maxSubagentBreadth: number

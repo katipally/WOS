@@ -29,6 +29,10 @@ export interface ModelRequest {
   maxTokens?: number
   apiKeyOverride?: string
   signal?: AbortSignal
+  /** Provider instance id (provider_instances.id). If provided, the runner
+   * dispatches to that exact instance. If absent, the runner picks the first
+   * enabled instance whose modelsJson includes the requested model id. */
+  providerId?: string
 }
 
 export type StreamEvent =
@@ -44,10 +48,16 @@ export interface TokenUsage {
   outputTokens: number
 }
 
+export type ProviderKind = 'openai' | 'anthropic' | 'openai-compatible'
+export type ApiStyle = 'responses' | 'chat-completions'
+
 export interface ModelInfo {
   id: string
   name: string
-  provider: 'openai' | 'anthropic'
+  /** UUID of the provider_instances row that serves this model. */
+  providerId: string
+  /** What kind of upstream the providerId corresponds to. */
+  kind: ProviderKind
   contextWindow?: number
   supportsReasoning?: boolean
   supportsVision?: boolean

@@ -2,19 +2,26 @@ import { ipcMain, app, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { getDb, schema, notifyWrite } from '../db'
 import { eq } from 'drizzle-orm'
-import { encryptApiKey, decryptApiKey } from '../crypto'
-import { getProviderByName, FALLBACK_MODELS } from '../providers'
-import { getDecryptedApiKeyOrNull } from '../providers/keystore'
+import {
+  listProviderInstances,
+  addProviderInstance,
+  updateProviderInstance,
+  removeProviderInstance,
+  refreshProviderModels,
+  listAllModels,
+  getProviderById,
+  type AddProviderOptions,
+  type UpdateProviderOptions,
+} from '../providers'
 import { resolveAgent, redactAgentConfig, type AgentConfig } from '../agent/settings'
+import { listAgentDefs, listVisibleAgentDefs } from '../agent/agentDefs'
 
 type AgentSettingsUpdate = {
   agentKey: string
-  inheritFrom?: string | null
   model?: string | null
   mode?: string | null
   systemPrompt?: string | null
   config?: AgentConfig
-  apiKeys?: Partial<Record<'openai' | 'anthropic', string>>
 }
 
 export function registerSettingsHandlers() {
@@ -45,29 +52,39 @@ export function registerSettingsHandlers() {
     return { success: true }
   })
 
+  // ── Agents ────────────────────────────────────────────────────────────────
+
   ipcMain.handle('settings:agents:get', async () => {
     const db = getDb()
     const rows = db.select().from(schema.agentSettings).all()
     const direct = rows.map(row => ({
       agentKey: row.agentKey,
-      inheritFrom: row.inheritFrom,
       model: row.model,
       mode: row.mode,
       systemPrompt: row.systemPrompt,
       config: redactAgentConfig((row.configJson ?? {}) as AgentConfig),
     }))
-    const resolved = await Promise.all(['wos', 'meeting'].map(async key => {
-      const agent = await resolveAgent(key)
+    const visible = listVisibleAgentDefs()
+    const resolved = await Promise.all(visible.map(async def => {
+      const agent = await resolveAgent(def.key)
       return {
-        agentKey: key,
-        inheritFrom: agent.inheritFrom,
+        agentKey: def.key,
+        label: def.label ?? def.key,
         model: agent.model,
         mode: agent.mode,
         systemPrompt: agent.systemPrompt,
         config: redactAgentConfig(agent.config),
+        settingsSchema: def.settingsSchema ?? [],
       }
     }))
-    return { success: true, agents: direct, resolved }
+    const defs = listAgentDefs().map(d => ({
+      key: d.key,
+      label: d.label ?? d.key,
+      surfaceInSettings: d.surfaceInSettings !== false,
+      settingsSchema: d.settingsSchema ?? [],
+      acceptedTags: d.acceptedTags ?? [],
+    }))
+    return { success: true, agents: direct, resolved, defs }
   })
 
   ipcMain.handle('settings:agents:save', (_event, update: AgentSettingsUpdate) => {
@@ -77,23 +94,10 @@ export function registerSettingsHandlers() {
       ...((existing?.configJson ?? {}) as AgentConfig),
       ...(update.config ?? {}),
     }
-    for (const provider of ['openai', 'anthropic'] as const) {
-      const key = update.apiKeys?.[provider]?.trim()
-      if (!key) continue
-      const { encrypted, iv } = encryptApiKey(key)
-      if (provider === 'openai') {
-        config.openaiApiKeyEncrypted = encrypted
-        config.openaiApiKeyIv = iv
-      } else {
-        config.anthropicApiKeyEncrypted = encrypted
-        config.anthropicApiKeyIv = iv
-      }
-    }
     const now = new Date()
     db.insert(schema.agentSettings)
       .values({
         agentKey: update.agentKey,
-        inheritFrom: update.inheritFrom ?? null,
         model: update.model || null,
         mode: update.mode || null,
         systemPrompt: update.systemPrompt || null,
@@ -104,7 +108,6 @@ export function registerSettingsHandlers() {
       .onConflictDoUpdate({
         target: schema.agentSettings.agentKey,
         set: {
-          inheritFrom: update.inheritFrom ?? null,
           model: update.model || null,
           mode: update.mode || null,
           systemPrompt: update.systemPrompt || null,
@@ -117,80 +120,69 @@ export function registerSettingsHandlers() {
     return { success: true, config: redactAgentConfig(config) }
   })
 
-  ipcMain.handle('settings:save-api-key', (_event, { provider, key }: { provider: 'openai' | 'anthropic'; key: string }) => {
-    const db = getDb()
-    const { encrypted, iv } = encryptApiKey(key)
-    const now = new Date()
-    db.insert(schema.apiKeys)
-      .values({ provider, encryptedKey: encrypted, iv, createdAt: now, updatedAt: now })
-      .onConflictDoUpdate({
-        target: schema.apiKeys.provider,
-        set: { encryptedKey: encrypted, iv, updatedAt: now },
-      })
-      .run()
-    notifyWrite()
-    return { success: true }
+  // ── Provider instances (multi-instance, openai-compatible) ────────────────
+
+  ipcMain.handle('providers:list', () => {
+    return { success: true, providers: listProviderInstances() }
   })
 
-  ipcMain.handle('settings:get-api-keys-presence', () => {
-    const db = getDb()
-    const rows = db.select().from(schema.apiKeys).all()
-    const result: Record<string, boolean> = {}
-    for (const row of rows) {
-      result[row.provider] = true
+  ipcMain.handle('providers:add', async (_event, opts: AddProviderOptions) => {
+    try {
+      const summary = await addProviderInstance(opts)
+      notifyWrite()
+      return { success: true, provider: summary }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
     }
-    return result
   })
 
-  ipcMain.handle(
-    'settings:test-api-key',
-    async (_event, { provider, key }: { provider: 'openai' | 'anthropic'; key: string }) => {
-      try {
-        const p = getProviderByName(provider)
-        const models = await p.fetchModels(key)
-        return { ok: true, modelCount: models.length }
-      } catch (err) {
-        return { ok: false, error: (err as Error).message }
-      }
+  ipcMain.handle('providers:update', async (_event, { id, patch }: { id: string; patch: UpdateProviderOptions }) => {
+    try {
+      const summary = await updateProviderInstance(id, patch)
+      notifyWrite()
+      return { success: true, provider: summary }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
     }
-  )
-
-  ipcMain.handle(
-    'models:fetch',
-    async (_event, { provider, apiKey }: { provider: 'openai' | 'anthropic'; apiKey: string }) => {
-      try {
-        const p = getProviderByName(provider)
-        const models = await p.fetchModels(apiKey)
-        return { success: true, models }
-      } catch (err) {
-        return { success: false, error: (err as Error).message, models: [] }
-      }
-    }
-  )
-
-  ipcMain.handle('models:fallback', () => {
-    return FALLBACK_MODELS
   })
 
-  ipcMain.handle('models:fetch-saved', async () => {
-    const results: Array<{ provider: 'openai' | 'anthropic'; models: unknown[]; error?: string }> = []
-    for (const provider of ['openai', 'anthropic'] as const) {
-      const key = await getDecryptedApiKeyOrNull(provider)
-      if (!key) continue
-      try {
-        const p = getProviderByName(provider)
-        const models = await p.fetchModels(key)
-        results.push({ provider, models })
-      } catch (err) {
-        results.push({ provider, models: [], error: (err as Error).message })
-      }
+  ipcMain.handle('providers:remove', (_event, { id }: { id: string }) => {
+    try {
+      removeProviderInstance(id)
+      notifyWrite()
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
     }
-    const merged = results.flatMap(r => r.models as Array<{ id: string }>)
-    if (merged.length === 0) {
-      return { success: false, models: FALLBACK_MODELS, errors: results.filter(r => r.error) }
-    }
-    return { success: true, models: merged, errors: results.filter(r => r.error) }
   })
+
+  ipcMain.handle('providers:refresh-models', async (_event, { id }: { id: string }) => {
+    try {
+      const models = await refreshProviderModels(id)
+      notifyWrite()
+      return { success: true, models }
+    } catch (err) {
+      return { success: false, error: (err as Error).message, models: [] }
+    }
+  })
+
+  ipcMain.handle('providers:test', async (_event, { id, apiKey }: { id: string; apiKey?: string }) => {
+    try {
+      const p = getProviderById(id)
+      const models = await p.fetchModels(apiKey ?? '')
+      return { success: true, modelCount: models.length, models }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
+  // ── Models (read-only, aggregated across all enabled instances) ───────────
+
+  ipcMain.handle('models:list', () => {
+    return { success: true, models: listAllModels() }
+  })
+
+  // ── App ───────────────────────────────────────────────────────────────────
 
   ipcMain.handle('app:version', () => app.getVersion())
 

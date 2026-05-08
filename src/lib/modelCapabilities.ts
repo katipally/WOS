@@ -59,7 +59,7 @@ export function getModelDescription(id: string): string | undefined {
   return undefined
 }
 
-export function enrichModel<T extends { id: string; name: string; provider: ModelProviderId }>(m: T) {
+export function enrichModel<T extends { id: string; name: string }>(m: T) {
   return {
     ...m,
     contextWindow: getContextWindow(m.id),

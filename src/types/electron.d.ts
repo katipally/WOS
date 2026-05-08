@@ -35,16 +35,26 @@ interface WosAPI {
   getSettings: () => Promise<Record<string, unknown>>
   setSetting: (key: string, value: unknown) => Promise<void>
   getSetting: (key: string) => Promise<unknown>
-  getAgentSettings: () => Promise<{ success: boolean; agents: AgentSettingsRecord[]; resolved: AgentSettingsRecord[] }>
+  getAgentSettings: () => Promise<{
+    success: boolean
+    agents: AgentSettingsRecord[]
+    resolved: AgentSettingsRecord[]
+    defs?: AgentDefDescriptor[]
+  }>
   saveAgentSettings: (input: AgentSettingsSaveInput) => Promise<{ success: boolean; config?: Record<string, unknown> }>
 
-  saveApiKey: (provider: 'openai' | 'anthropic', key: string) => Promise<{ success: boolean }>
-  getApiKeysPresence: () => Promise<Record<string, boolean>>
-  testApiKey: (provider: 'openai' | 'anthropic', key: string) => Promise<{ ok: boolean; modelCount?: number; error?: string }>
-
-  fetchModels: (provider: 'openai' | 'anthropic', apiKey: string) => Promise<{ success: boolean; models: import('./index').ModelInfo[]; error?: string }>
-  fetchSavedModels: () => Promise<{ success: boolean; models: import('./index').ModelInfo[]; errors?: Array<{ provider: string; error?: string }> }>
-  getFallbackModels: () => Promise<import('./index').ModelInfo[]>
+  providers: {
+    list: () => Promise<ProviderInstanceSummary[]>
+    add: (input: ProviderInstanceCreateInput) => Promise<{ success: boolean; id?: string; error?: string }>
+    update: (id: string, patch: ProviderInstancePatchInput) => Promise<{ success: boolean; error?: string }>
+    remove: (id: string) => Promise<{ success: boolean }>
+    refreshModels: (id: string) => Promise<{ success: boolean; models?: import('./index').ModelInfo[]; error?: string }>
+    test: (input: { id?: string; baseUrl?: string; apiKey: string; kind?: 'openai' | 'anthropic' | 'openai-compatible' }) =>
+      Promise<{ ok: boolean; modelCount?: number; error?: string }>
+  }
+  models: {
+    list: () => Promise<import('./index').ModelInfo[]>
+  }
 
   getConversations: () => Promise<import('./index').Conversation[]>
   getConversation: (id: string) => Promise<import('./index').Conversation | null>
@@ -182,21 +192,68 @@ interface WosAPI {
 
 interface AgentSettingsRecord {
   agentKey: string
-  inheritFrom: string | null
   model: string | null
   mode: string | null
   systemPrompt: string | null
   config: Record<string, unknown>
 }
 
+interface AgentDefDescriptor {
+  key: string
+  label?: string
+  systemPrompt?: string
+  defaults?: Record<string, unknown>
+  settingsSchema?: Array<{
+    key: string
+    kind: 'string' | 'text' | 'boolean' | 'number' | 'enum' | 'model'
+    label: string
+    description?: string
+    defaultValue?: unknown
+    options?: Array<{ value: string; label: string }>
+    min?: number
+    max?: number
+  }>
+  acceptedTags?: string[]
+  surfaceInSettings?: boolean
+}
+
 interface AgentSettingsSaveInput {
   agentKey: string
-  inheritFrom?: string | null
   model?: string | null
   mode?: string | null
   systemPrompt?: string | null
   config?: Record<string, unknown>
-  apiKeys?: Partial<Record<'openai' | 'anthropic', string>>
+}
+
+interface ProviderInstanceSummary {
+  id: string
+  kind: 'openai' | 'anthropic' | 'openai-compatible'
+  label: string
+  baseUrl?: string | null
+  enabled: boolean
+  hasApiKey: boolean
+  models?: import('./index').ModelInfo[]
+  customHeaders?: Record<string, string> | null
+  createdAt?: number
+  updatedAt?: number
+}
+
+interface ProviderInstanceCreateInput {
+  id?: string
+  kind: 'openai' | 'anthropic' | 'openai-compatible'
+  label: string
+  apiKey: string
+  baseUrl?: string | null
+  customHeaders?: Record<string, string> | null
+  enabled?: boolean
+}
+
+interface ProviderInstancePatchInput {
+  label?: string
+  baseUrl?: string | null
+  enabled?: boolean
+  customHeaders?: Record<string, string> | null
+  apiKey?: string
 }
 
 interface AppManifest {

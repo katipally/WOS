@@ -107,12 +107,14 @@ export async function analyzeTranscript(transcript: string, title?: string, sign
     throw new Error('Cannot analyze an empty transcript.')
   }
 
-  const agent = await resolveAgent('meeting')
+  const meetingAnalyzeSettings = await resolveAgent('meetingsAnalyze').catch(() => null)
+  const fallback = await resolveAgent('meeting')
+  const agent = meetingAnalyzeSettings && meetingAnalyzeSettings.model ? meetingAnalyzeSettings : fallback
   if (!agent.model) {
     throw new Error('No Meeting Agent model selected. Open Settings → Agents and pick a model first.')
   }
 
-  const systemPrompt = `${agent.systemPrompt}
+  const systemPrompt = `${agent.systemPrompt || fallback.systemPrompt || ''}
 
 You will receive a meeting transcript. Extract the structured notes by calling the \`save_meeting_notes\` tool exactly once with the requested schema. Do not respond with any text outside of that tool call. Be faithful to the transcript — never invent owners, dates, or decisions that are not grounded in it.`
 

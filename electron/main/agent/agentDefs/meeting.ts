@@ -1,5 +1,4 @@
-import type { Tool } from '../../tools'
-import type { AgentDef } from './index'
+import type { AgentDef, SettingDescriptor } from './index'
 
 export const DEFAULT_MEETING_SYSTEM_PROMPT = `You are WOS Meeting Agent, a focused meeting specialist.
 You help users join Google Meet sessions, capture consented transcripts, summarize discussions, extract decisions, and prepare follow-up actions.
@@ -10,37 +9,28 @@ CRITICAL — asking the user:
 - Pick the most specific \`kind\`: \`picker\` for resource selection (channel/repo/calendar/meeting), \`choice\` for enums, \`confirm\` for yes/no, \`fileDrop\` for file inputs, \`form\` only when multiple fields are truly needed, \`text\` as last resort.
 - Ask AT MOST one question per turn. Do not bundle multiple questions into one prompt.`
 
-/**
- * Curated tool set for the meeting subagent. Allowlist by exact name + a
- * few prefixes for app-provided meeting-adjacent tools. Anything not on
- * the list is hidden from this agent.
- */
-const MEETING_TOOL_ALLOW_EXACT = new Set<string>([
-  'webFetch',
-  'webSearch',
-  'fileRead',
-  'glob',
-  'grep',
-  'AskUser',
-  'read_skill',
-  'read_rule',
-])
-
-const MEETING_TOOL_ALLOW_PREFIX = ['meeting_', 'google_', 'slack_']
+const meetingSettingsSchema: SettingDescriptor[] = [
+  { key: 'model', kind: 'model', label: 'Model', description: 'Model used by the meeting agent.' },
+  {
+    key: 'liveSource', kind: 'enum', label: 'Live transcript source', defaultValue: 'captions',
+    options: [{ value: 'captions', label: 'Live captions' }],
+  },
+  { key: 'autoSummarize', kind: 'boolean', label: 'Auto-summarize after meeting ends', defaultValue: true },
+  { key: 'defaultSlackChannel', kind: 'string', label: 'Default Slack channel for follow-ups', defaultValue: '' },
+  { key: 'systemPrompt', kind: 'text', label: 'Custom system prompt' },
+]
 
 export const meetingAgent: AgentDef = {
   key: 'meeting',
+  label: 'Meeting',
+  surfaceInSettings: true,
   systemPrompt: DEFAULT_MEETING_SYSTEM_PROMPT,
-  defaultInheritFrom: 'wos',
-  defaultConfig: {
+  defaults: {
+    model: '',
     liveSource: 'captions',
     autoSummarize: true,
     defaultSlackChannel: '',
   },
-  toolFilter(allTools: Tool[]): Tool[] {
-    return allTools.filter(t => {
-      if (MEETING_TOOL_ALLOW_EXACT.has(t.name)) return true
-      return MEETING_TOOL_ALLOW_PREFIX.some(p => t.name.startsWith(p))
-    })
-  },
+  settingsSchema: meetingSettingsSchema,
+  acceptedTags: ['meetings', 'apps:google', 'apps:slack'],
 }
