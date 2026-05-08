@@ -149,6 +149,7 @@ export async function initDatabase(): Promise<WosDb> {
       path TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
       triggers_json TEXT,
+      agent_scope TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );

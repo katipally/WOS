@@ -39,6 +39,12 @@ export interface ToolContext {
   /** Conversation id of the running turn. Tools that need to persist ledger
    * rows (e.g. Task subagent → subagent_runs / tasks) read this. */
   conversationId?: string
+  /**
+   * Active agent pack key ("wos", "meeting", "projects", "automation").
+   * Set by the kernel from the AgentRunner; passed into hooks so per-agent
+   * scoped hooks fire only when the right pack is running.
+   */
+  agentKey?: string
   /** Arbitrary side-channel key/value passthrough (e.g. conversationId, reasoningEffort). */
   extras?: Record<string, unknown>
 }
@@ -142,7 +148,10 @@ export async function executeTools(
   if (!tool) return { output: null as unknown as string, error: `Unknown tool: ${toolName}` }
 
   const { runPreToolUse, runPostToolUse, runOnError } = await import('../hooks/manager')
-  const hookCtx = { workspacePath: context.workspacePath ?? null }
+  const hookCtx = {
+    workspacePath: context.workspacePath ?? null,
+    agentKey: context.agentKey,
+  }
 
   const pre = await runPreToolUse(toolName, input, hookCtx)
   if (pre.block) {

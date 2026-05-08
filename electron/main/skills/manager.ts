@@ -4,7 +4,7 @@ import matter from 'gray-matter'
 import { getDb, schema, notifyWrite } from '../db'
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
-import { skillsDir, ensureDir } from '../paths'
+import { skillsDir, agentSkillsDir, ensureDir } from '../paths'
 import type { Tool } from '../tools'
 import { listConnectedAppSkills, getConnectedAppSkillBody } from '../apps/manager'
 
@@ -16,6 +16,12 @@ export interface SkillRecord {
   path: string
   enabled: boolean
   triggers: string[]
+  /**
+   * If set, this skill is scoped to the given agent key (lives under
+   * `~/.wos/agents/<agentKey>/skills/`). When undefined the skill is
+   * global (`~/.wos/skills/`).
+   */
+  agentScope?: string
 }
 
 function parseSkill(dir: string): { name: string; description: string; triggers: string[]; body: string } | null {
@@ -54,15 +60,25 @@ function listSkillDirs(rootDir: string): string[] {
   return out
 }
 
+/** Pack ids that get a per-agent skills folder under `~/.wos/agents/<id>/skills/`. */
+const AGENT_SCOPES = ['wos', 'meeting', 'projects', 'automation'] as const
+
 export function scanSkills(): SkillRecord[] {
   ensureDir(skillsDir())
   const db = getDb()
   const records: SkillRecord[] = []
-  const dirs = listSkillDirs(skillsDir())
+  const now = new Date()
+
+  type ScanItem = { dir: string; scope: string | null }
+  const items: ScanItem[] = []
+  for (const dir of listSkillDirs(skillsDir())) items.push({ dir, scope: null })
+  for (const scope of AGENT_SCOPES) {
+    const root = agentSkillsDir(scope)
+    for (const dir of listSkillDirs(root)) items.push({ dir, scope })
+  }
 
   // Upsert each found skill; keep existing `enabled` state.
-  const now = new Date()
-  for (const dir of dirs) {
+  for (const { dir, scope } of items) {
     const parsed = parseSkill(dir)
     if (!parsed) continue
     const existing = db.select().from(schema.skills).where(eq(schema.skills.path, dir)).get()
@@ -73,6 +89,7 @@ export function scanSkills(): SkillRecord[] {
         name: parsed.name,
         description: parsed.description,
         triggersJson: parsed.triggers,
+        agentScope: scope,
         updatedAt: now,
       }).where(eq(schema.skills.id, id)).run()
     } else {
@@ -84,6 +101,7 @@ export function scanSkills(): SkillRecord[] {
         path: dir,
         enabled: true,
         triggersJson: parsed.triggers,
+        agentScope: scope,
         createdAt: now,
         updatedAt: now,
       }).run()
@@ -96,11 +114,12 @@ export function scanSkills(): SkillRecord[] {
       path: dir,
       enabled,
       triggers: parsed.triggers,
+      agentScope: scope ?? undefined,
     })
   }
 
   // Prune rows whose folder is gone.
-  const presentPaths = new Set(dirs)
+  const presentPaths = new Set(items.map(i => i.dir))
   for (const row of db.select().from(schema.skills).all()) {
     if (!presentPaths.has(row.path)) {
       db.delete(schema.skills).where(eq(schema.skills.id, row.id)).run()
@@ -120,6 +139,7 @@ export function listSkills(): SkillRecord[] {
     path: r.path,
     enabled: !!r.enabled,
     triggers: (r.triggersJson as string[] | null) ?? [],
+    agentScope: r.agentScope ?? undefined,
   }))
 }
 
@@ -180,9 +200,25 @@ export function deleteSkill(id: string) {
  * Compact index inserted into the system prompt so the model knows what
  * skills exist and what triggers them. Actual skill bodies are pulled via
  * the ReadSkill tool.
+ *
+ * If `agentKey` is provided, the index is scoped to:
+ *   - global skills (agentScope == null), AND
+ *   - skills owned by that agent (agentScope == agentKey).
+ * Per-agent skills with the same name as a global skill take precedence.
  */
-export function buildSkillIndex(): string {
-  const skills = listSkills().filter(s => s.enabled)
+export function buildSkillIndex(agentKey?: string): string {
+  let skills = listSkills().filter(s => s.enabled)
+  if (agentKey) {
+    skills = skills.filter(s => !s.agentScope || s.agentScope === agentKey)
+    // Per-agent override: if a per-agent skill shares a name with a
+    // global one, drop the global copy.
+    const ownedNames = new Set(skills.filter(s => s.agentScope === agentKey).map(s => s.name))
+    skills = skills.filter(s => s.agentScope === agentKey || !ownedNames.has(s.name))
+  } else {
+    // Default behaviour (back-compat): only show global skills in
+    // generic contexts where no agent is identified.
+    skills = skills.filter(s => !s.agentScope)
+  }
   const appSkills = listConnectedAppSkills()
   if (skills.length === 0 && appSkills.length === 0) return ''
   const lines: string[] = []
@@ -190,7 +226,8 @@ export function buildSkillIndex(): string {
     lines.push('## Available skills', '', 'Call the `ReadSkill` tool with an id below when one of the triggers matches.', '')
     for (const s of skills) {
       const trig = s.triggers.length ? ` [triggers: ${s.triggers.join(', ')}]` : ''
-      lines.push(`- **${s.id.slice(0, 8)}** — ${s.name}: ${s.description}${trig}`)
+      const scope = s.agentScope ? ` (${s.agentScope})` : ''
+      lines.push(`- **${s.id.slice(0, 8)}** — ${s.name}${scope}: ${s.description}${trig}`)
     }
   }
   if (appSkills.length > 0) {

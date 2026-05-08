@@ -27,6 +27,11 @@ export function wosHome(): string {
   return _wosHome
 }
 
+/** @internal Reset the cached home (test-only). */
+export function _resetWosHomeForTests(): void {
+  _wosHome = null
+}
+
 export function ensureDir(dir: string) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
 }
@@ -45,6 +50,23 @@ export function mcpConfigPath(): string {
 
 export function skillsDir(): string {
   return wosSubpath('skills')
+}
+
+/**
+ * Per-agent skills directory: `~/.wos/agents/<agentKey>/skills/`. When an
+ * agent (Meeting, Projects, Automation, ...) reads a skill with the same
+ * id present both globally and in its own folder, the per-agent copy wins.
+ */
+export function agentSkillsDir(agentKey: string): string {
+  return wosSubpath('agents', agentKey, 'skills')
+}
+
+/**
+ * Per-agent hooks directory: `~/.wos/agents/<agentKey>/hooks/`. Reserved
+ * for future use (per-agent hook overrides).
+ */
+export function agentHooksDir(agentKey: string): string {
+  return wosSubpath('agents', agentKey, 'hooks')
 }
 
 export function userRulesDir(): string {

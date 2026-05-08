@@ -247,7 +247,7 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
     const { buildRulesPromptSection } = await import('../rules/manager')
     const { buildSkillIndex } = await import('../skills/manager')
     rulesSection = buildRulesPromptSection(null)
-    skillsSection = buildSkillIndex()
+    skillsSection = buildSkillIndex(agentKey)
   } catch (err) {
     // Skills/rules managers may not be initialised during early tests — non-fatal.
     if (process.env.WOS_DEBUG === '1') console.warn('[query] rules/skills load failed', err)
@@ -604,6 +604,7 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
               parentReasoningEffort: reasoningEffort,
               parentApiKeyOverride: apiKeyOverride,
               conversationId,
+              agentKey,
               extras: { subagentDepth: maxDepth },
             }
           )

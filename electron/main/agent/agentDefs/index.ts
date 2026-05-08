@@ -18,6 +18,7 @@
  */
 
 import type { Tool } from '../../tools'
+import { getAgentPack } from '../../agents'
 import { wosAgent } from './wos'
 import { meetingAgent } from './meeting'
 import { projectsAgent } from './projects'
@@ -104,7 +105,17 @@ const defs: Record<string, AgentDef> = {
 
 export function getAgentDef(key: string | undefined | null): AgentDef | undefined {
   if (!key) return undefined
-  return defs[key]
+  const def = defs[key]
+  if (!def) return undefined
+  // If a matching AgentPack ships an AGENTS.md, use its persona as the
+  // system prompt source. This lets users edit personas in markdown
+  // without touching TypeScript while keeping AgentDef as the runtime
+  // contract for tags / settings / defaults.
+  const pack = getAgentPack(key)
+  if (pack && pack.persona) {
+    return { ...def, systemPrompt: pack.persona }
+  }
+  return def
 }
 
 export function listAgentDefs(): AgentDef[] {

@@ -8,6 +8,33 @@ import { createAutomation, type AutomationCreateSpec } from '../automations/runt
 
 const KIND_LIST: AutomationKind[] = ['schedule', 'hook', 'webhook']
 
+/**
+ * Detect placeholder phrasing that an LLM commonly emits when it failed to
+ * resolve concrete resources before calling automation_create. We refuse the
+ * call so the agent re-asks the user instead of silently saving a broken spec.
+ *
+ * Returns the offending phrase, or null if the spec looks fully resolved.
+ */
+function detectPlaceholder(spec: { message?: string; name?: string }): string | null {
+  const patterns: RegExp[] = [
+    /\bthe (specified|selected|target|chosen|user'?s|user is) /i,
+    /\b(your|that) (channel|repo|repository|project|workspace|server)\b/i,
+    /\b<[^>]{2,40}>\b/,
+    /\{\{[^}]+\}\}/,
+    /\[(channel|user|recipient|email|target)\]/i,
+    /\bplaceholder\b/i,
+  ]
+  const fields: Array<string | undefined> = [spec.message, spec.name]
+  for (const f of fields) {
+    if (!f) continue
+    for (const re of patterns) {
+      const m = f.match(re)
+      if (m) return m[0]
+    }
+  }
+  return null
+}
+
 const CREATE_DESCRIPTION = [
   'Create or replace an automation in ONE call. Returns { ok:true, id, kind, summary } on success or { ok:false, error:{field,expected,got,hint} } on validation failure — read the error and fix the offending field on your next attempt.',
   '',
@@ -154,7 +181,15 @@ export const automationTools: Tool[] = [
       required: ['name', 'kind', 'message'],
     },
     async execute(input) {
-      const result = createAutomation(input as AutomationCreateSpec, { fromAgent: true })
+      const spec = input as AutomationCreateSpec & { message?: string; name?: string }
+      const placeholder = detectPlaceholder(spec)
+      if (placeholder) {
+        return {
+          output: '',
+          error: `Refused: automation contains an unresolved placeholder (${placeholder}). Resolve concrete values (channel id, target, recipient, etc.) by asking the user via AskUser before calling automation_create.`,
+        }
+      }
+      const result = createAutomation(spec, { fromAgent: true })
       return { output: result }
     },
   },

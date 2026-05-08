@@ -99,6 +99,12 @@ export const skills = sqliteTable('skills', {
   path: text('path').notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   triggersJson: text('triggers_json', { mode: 'json' }),
+  /**
+   * Per-agent scope: when set, the skill is owned by the given agent
+   * (Meeting/Projects/Automation/...) and lives under
+   * `~/.wos/agents/<agent_scope>/skills/`. NULL means a global skill.
+   */
+  agentScope: text('agent_scope'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 })

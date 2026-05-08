@@ -78,25 +78,88 @@ interface SubAgentInput {
   presetKey?: string
   /** When true, start from a snapshot of the parent's conversation (for prefix cache reuse). */
   fork?: boolean
+  /**
+   * Fan-out mode: when true, the tool runs one subagent **per prompt in
+   * `prompts`** concurrently and returns an array of results. The breadth
+   * limit is enforced per launch (we only kick off as many as the registry
+   * has room for; the rest fail fast). `description` is reused as a prefix
+   * label and indexed (`#1`, `#2`, ...).
+   */
+  parallel?: boolean
+  /** List of prompts when `parallel: true`. Each becomes one subagent. */
+  prompts?: string[]
 }
 
 export const subAgentTool: Tool = {
   name: 'Task',
-  description: 'Spawn a subagent to handle a specific task. The subagent has its own context and tools. Use for parallelizable or complex subtasks. Set `fork: true` to inherit parent context for prefix cache reuse (recommended for tightly-coupled subtasks).',
+  description: 'Spawn a subagent to handle a specific task. The subagent has its own context and tools. Use for parallelizable or complex subtasks. Set `fork: true` to inherit parent context for prefix cache reuse (recommended for tightly-coupled subtasks). For fan-out, set `parallel: true` and pass `prompts: string[]` — one subagent runs per prompt concurrently and an array of results is returned.',
   inputSchema: {
     type: 'object',
     properties: {
       description: { type: 'string', description: 'Brief description of what this subagent will do' },
-      prompt: { type: 'string', description: 'Detailed instructions for the subagent' },
+      prompt: { type: 'string', description: 'Detailed instructions for the subagent (single-run mode)' },
       preset: { type: 'string', description: 'Optional preset agent key, e.g. "meeting".' },
       presetKey: { type: 'string', description: 'Alias for preset.' },
       fork: { type: 'boolean', description: 'If true, inherit parent conversation context (cache-efficient).' },
+      parallel: { type: 'boolean', description: 'If true, run one subagent per entry in `prompts` concurrently and return an array of results.' },
+      prompts: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'List of prompts when parallel=true. Each becomes its own subagent run.',
+      },
     },
-    required: ['description', 'prompt'],
+    required: ['description'],
   },
   async execute(input: unknown, ctx: ToolContext): Promise<ToolResult> {
-    const { description, prompt, fork = true } = input as SubAgentInput
-    const preset = (input as SubAgentInput).presetKey ?? (input as SubAgentInput).preset
+    const i = input as SubAgentInput
+    if (i.parallel && Array.isArray(i.prompts) && i.prompts.length > 0) {
+      const { maxBreadth } = getSubagentLimits()
+      const parentId = (ctx.extras?.subagentId as string) ?? null
+      const available = Math.max(0, maxBreadth - getCurrentBreadth(parentId))
+      if (available <= 0) {
+        return {
+          output: `Parallel fan-out blocked: breadth limit (${maxBreadth}) already reached.`,
+          error: `Max subagent breadth (${maxBreadth}) exceeded`,
+        }
+      }
+      const prompts = i.prompts.slice(0, available)
+      const skipped = i.prompts.length - prompts.length
+      const results = await Promise.all(
+        prompts.map((p, idx) =>
+          runSingleSubAgent(
+            {
+              description: `${i.description} #${idx + 1}`,
+              prompt: p,
+              preset: i.preset,
+              presetKey: i.presetKey,
+              fork: i.fork ?? true,
+            },
+            ctx,
+          ),
+        ),
+      )
+      const summary = results.map((r, idx) => ({
+        index: idx,
+        output: typeof r.output === 'string' ? r.output : JSON.stringify(r.output),
+        error: r.error,
+      }))
+      return {
+        output: JSON.stringify({
+          parallel: true,
+          count: results.length,
+          skipped,
+          results: summary,
+        }),
+      }
+    }
+    if (!i.prompt) return { output: '', error: 'Subagent prompt is required (or pass parallel:true with prompts[])' }
+    return runSingleSubAgent(i, ctx)
+  },
+}
+
+async function runSingleSubAgent(input: SubAgentInput, ctx: ToolContext): Promise<ToolResult> {
+    const { description, prompt, fork = true } = input
+    const preset = input.presetKey ?? input.preset
     const agentId = randomUUID()
     const agentName = preset ?? deriveSubagentName(description)
     const colorSeed = stableColorSeed(agentId)
@@ -174,7 +237,10 @@ export const subAgentTool: Tool = {
     }
 
     const { runBeforeSubagent } = await import('../hooks/manager')
-    const gate = await runBeforeSubagent(preset ?? 'wos', input, { workspacePath: ctx.workspacePath ?? null })
+    const gate = await runBeforeSubagent(preset ?? 'wos', input, {
+      workspacePath: ctx.workspacePath ?? null,
+      agentKey: ctx.agentKey,
+    })
     if (gate.block) {
       const reason = gate.reason ?? 'blocked by hook'
       await ctx.yieldEvent({ type: 'subagent_start', agentId, agentName, colorSeed, prompt: description })
@@ -270,5 +336,4 @@ export const subAgentTool: Tool = {
     await ctx.yieldEvent({ type: 'subagent_end', agentId, agentName, colorSeed, result })
     finishLedger('success', result.slice(0, 4000) || null)
     return { output: result || '(subagent completed with no output)' }
-  },
 }

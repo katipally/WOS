@@ -209,6 +209,20 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 10,
+    description: 'Skills: add agent_scope column so a skill can belong to a specific agent pack (~/.wos/agents/<id>/skills/).',
+    up(db) {
+      const hasTable = db.prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='skills'`,
+      ).get()
+      if (!hasTable) return
+      const cols = db.prepare(`PRAGMA table_info(skills)`).all() as Array<{ name: string }>
+      if (!cols.some(c => c.name === 'agent_scope')) {
+        db.exec(`ALTER TABLE skills ADD COLUMN agent_scope TEXT`)
+      }
+    },
+  },
 ]
 
 function ensureSchemaVersionTable(db: SqliteDb): void {

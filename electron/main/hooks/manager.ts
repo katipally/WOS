@@ -25,6 +25,12 @@ export interface HookContext {
   workspacePath?: string | null
   /** Source of the hook ("user", "app:slack", etc.) — set automatically. */
   source?: string
+  /**
+   * Active agent pack key ("wos", "meeting", "projects", "automation").
+   * Set by the agent kernel before dispatching a tool/subagent. When set,
+   * the dispatcher skips hooks whose `agentScope` doesn't include it.
+   */
+  agentKey?: string
   [key: string]: unknown
 }
 
@@ -43,15 +49,25 @@ export interface HookHandlers {
   BeforeSubagent?: (name: string, args: unknown, ctx: HookContext) => BeforeSubagentResult | Promise<BeforeSubagentResult>
 }
 
+export interface RegisterHookOptions {
+  /**
+   * Limit this hook to specific agent packs. When omitted the hook is
+   * global (back-compat — every dispatch runs it). When set, the hook only
+   * runs if the dispatch context's `agentKey` is in the list.
+   */
+  agentScope?: string[]
+}
+
 interface RegisteredHook {
   source: string
   handlers: HookHandlers
+  agentScope?: string[]
 }
 
 const REGISTRY: RegisteredHook[] = []
 
-export function registerHooks(source: string, handlers: HookHandlers): void {
-  REGISTRY.push({ source, handlers })
+export function registerHooks(source: string, handlers: HookHandlers, options: RegisterHookOptions = {}): void {
+  REGISTRY.push({ source, handlers, agentScope: options.agentScope })
 }
 
 export function clearHooks(source?: string): void {
@@ -64,10 +80,11 @@ export function clearHooks(source?: string): void {
   }
 }
 
-export function listHooks(): Array<{ source: string; events: string[] }> {
+export function listHooks(): Array<{ source: string; events: string[]; agentScope?: string[] }> {
   return REGISTRY.map(h => ({
     source: h.source,
     events: Object.keys(h.handlers),
+    agentScope: h.agentScope,
   }))
 }
 
@@ -76,21 +93,35 @@ function logHookError(event: string, source: string, err: unknown): void {
   console.warn(`[hooks] ${event} handler from "${source}" failed: ${msg}`)
 }
 
+/**
+ * Returns true if the hook should run given the dispatch context.
+ * - Global hooks (no agentScope) always run.
+ * - Scoped hooks only run when ctx.agentKey is one of their scopes.
+ * - If ctx has no agentKey (caller didn't tag the dispatch), scoped hooks
+ *   are skipped — global behaviour wins by default.
+ */
+function isHookActive(hook: RegisteredHook, ctx: HookContext): boolean {
+  if (!hook.agentScope || hook.agentScope.length === 0) return true
+  if (!ctx.agentKey) return false
+  return hook.agentScope.includes(ctx.agentKey)
+}
+
 export async function runPreToolUse(
   toolName: string,
   args: unknown,
   ctx: HookContext = {},
 ): Promise<{ block: boolean; reason?: string; args: unknown }> {
   let currentArgs = args
-  for (const { source, handlers } of REGISTRY) {
-    if (!handlers.PreToolUse) continue
+  for (const hook of REGISTRY) {
+    if (!hook.handlers.PreToolUse) continue
+    if (!isHookActive(hook, ctx)) continue
     try {
-      const ret = await handlers.PreToolUse(toolName, currentArgs, { ...ctx, source })
+      const ret = await hook.handlers.PreToolUse(toolName, currentArgs, { ...ctx, source: hook.source })
       if (!ret) continue
       if (ret.block) return { block: true, reason: ret.reason, args: currentArgs }
       if ('args' in ret && ret.args !== undefined) currentArgs = ret.args
     } catch (err) {
-      logHookError('PreToolUse', source, err)
+      logHookError('PreToolUse', hook.source, err)
     }
   }
   return { block: false, args: currentArgs }
@@ -103,60 +134,65 @@ export async function runPostToolUse(
   ctx: HookContext = {},
 ): Promise<unknown> {
   let currentResult = result
-  for (const { source, handlers } of REGISTRY) {
-    if (!handlers.PostToolUse) continue
+  for (const hook of REGISTRY) {
+    if (!hook.handlers.PostToolUse) continue
+    if (!isHookActive(hook, ctx)) continue
     try {
-      const ret = await handlers.PostToolUse(toolName, args, currentResult, { ...ctx, source })
+      const ret = await hook.handlers.PostToolUse(toolName, args, currentResult, { ...ctx, source: hook.source })
       if (ret && 'result' in ret && ret.result !== undefined) currentResult = ret.result
     } catch (err) {
-      logHookError('PostToolUse', source, err)
+      logHookError('PostToolUse', hook.source, err)
     }
   }
   return currentResult
 }
 
 export async function runOnConnect(appId: string, creds: Record<string, string>, ctx: HookContext = {}): Promise<void> {
-  for (const { source, handlers } of REGISTRY) {
-    if (!handlers.OnConnect) continue
+  for (const hook of REGISTRY) {
+    if (!hook.handlers.OnConnect) continue
+    if (!isHookActive(hook, ctx)) continue
     try {
-      await handlers.OnConnect(appId, creds, { ...ctx, source })
+      await hook.handlers.OnConnect(appId, creds, { ...ctx, source: hook.source })
     } catch (err) {
-      logHookError('OnConnect', source, err)
+      logHookError('OnConnect', hook.source, err)
     }
   }
 }
 
 export async function runOnDisconnect(appId: string, ctx: HookContext = {}): Promise<void> {
-  for (const { source, handlers } of REGISTRY) {
-    if (!handlers.OnDisconnect) continue
+  for (const hook of REGISTRY) {
+    if (!hook.handlers.OnDisconnect) continue
+    if (!isHookActive(hook, ctx)) continue
     try {
-      await handlers.OnDisconnect(appId, { ...ctx, source })
+      await hook.handlers.OnDisconnect(appId, { ...ctx, source: hook.source })
     } catch (err) {
-      logHookError('OnDisconnect', source, err)
+      logHookError('OnDisconnect', hook.source, err)
     }
   }
 }
 
 export async function runOnError(toolName: string, error: unknown, ctx: HookContext = {}): Promise<{ handled: boolean; result?: unknown }> {
-  for (const { source, handlers } of REGISTRY) {
-    if (!handlers.OnError) continue
+  for (const hook of REGISTRY) {
+    if (!hook.handlers.OnError) continue
+    if (!isHookActive(hook, ctx)) continue
     try {
-      const ret = await handlers.OnError(toolName, error, { ...ctx, source })
+      const ret = await hook.handlers.OnError(toolName, error, { ...ctx, source: hook.source })
       if (ret?.handled) return { handled: true, result: ret.result }
     } catch (err) {
-      logHookError('OnError', source, err)
+      logHookError('OnError', hook.source, err)
     }
   }
   return { handled: false }
 }
 
 export async function emitNotification(level: 'info' | 'warning' | 'error', message: string, ctx: HookContext = {}): Promise<void> {
-  for (const { source, handlers } of REGISTRY) {
-    if (!handlers.Notification) continue
+  for (const hook of REGISTRY) {
+    if (!hook.handlers.Notification) continue
+    if (!isHookActive(hook, ctx)) continue
     try {
-      await handlers.Notification(level, message, { ...ctx, source })
+      await hook.handlers.Notification(level, message, { ...ctx, source: hook.source })
     } catch (err) {
-      logHookError('Notification', source, err)
+      logHookError('Notification', hook.source, err)
     }
   }
 }
@@ -167,15 +203,16 @@ export async function runBeforeSubagent(
   ctx: HookContext = {},
 ): Promise<{ block: boolean; reason?: string; args: unknown }> {
   let currentArgs = args
-  for (const { source, handlers } of REGISTRY) {
-    if (!handlers.BeforeSubagent) continue
+  for (const hook of REGISTRY) {
+    if (!hook.handlers.BeforeSubagent) continue
+    if (!isHookActive(hook, ctx)) continue
     try {
-      const ret = await handlers.BeforeSubagent(name, currentArgs, { ...ctx, source })
+      const ret = await hook.handlers.BeforeSubagent(name, currentArgs, { ...ctx, source: hook.source })
       if (!ret) continue
       if (ret.block) return { block: true, reason: ret.reason, args: currentArgs }
       if ('args' in ret && ret.args !== undefined) currentArgs = ret.args
     } catch (err) {
-      logHookError('BeforeSubagent', source, err)
+      logHookError('BeforeSubagent', hook.source, err)
     }
   }
   return { block: false, args: currentArgs }

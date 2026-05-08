@@ -1,4 +1,7 @@
 import type { AgentDef, SettingDescriptor } from './index'
+import { getAgentPack } from '../../agents'
+
+const PACK_PERSONA = getAgentPack('automation')?.persona ?? ''
 
 const automationSettingsSchema: SettingDescriptor[] = [
   { key: 'model', kind: 'model', label: 'Model', description: 'Model used to plan and execute automations (scheduled, hook, and webhook runs).' },
@@ -6,7 +9,9 @@ const automationSettingsSchema: SettingDescriptor[] = [
 ]
 
 /**
- * Default Automation agent definition. This persona is used at two points:
+ * Default Automation agent definition. The persona is loaded from
+ * `electron/main/agents/automation/AGENTS.md`. This persona is used at two
+ * points:
  *
  *   1. Spec parsing — when the user describes an automation in natural
  *      language (Settings → Automations → "Describe…"), we use this agent's
@@ -24,6 +29,5 @@ export const automationAgent: AgentDef = {
   surfaceInSettings: true,
   defaults: { model: '' },
   settingsSchema: automationSettingsSchema,
-  systemPrompt:
-    'You are an autonomous automation runner. The task you are given is the entire instruction — there is no live user to ask. Use the tools available to complete the task end-to-end, then produce a concise final result. Never invent resources or values; if a required input is missing, fail clearly with what is missing rather than guessing.',
+  systemPrompt: PACK_PERSONA,
 }

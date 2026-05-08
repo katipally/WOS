@@ -163,6 +163,12 @@ app.whenReady().then(async () => {
 
   // Scan skills and rules from disk so they're available to the first query.
   try {
+    const { runSkillsMigrationV2 } = await import('./skills/migrateV2')
+    runSkillsMigrationV2()
+  } catch (err) {
+    console.warn('[main] skills v2 migration failed', err)
+  }
+  try {
     scanSkills()
   } catch (err) {
     console.warn('[main] scanSkills failed', err)
