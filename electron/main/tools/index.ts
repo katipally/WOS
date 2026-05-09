@@ -10,6 +10,7 @@ import { subAgentTool } from './subAgent'
 import { askUserTool } from './askUser'
 import { todoWriteTool } from './todoWrite'
 import { enterPlanModeTool, exitPlanModeTool } from './planMode'
+import { delegateToCoderTool } from './coder'
 import type { AgentEvent } from '../agent/query'
 import { buildConnectedAppTools } from '../apps/manager'
 import { buildMcpTools } from '../mcp/manager'
@@ -82,6 +83,7 @@ const BUILTIN_TOOLS: Tool[] = [
   todoWriteTool,
   enterPlanModeTool,
   exitPlanModeTool,
+  delegateToCoderTool,
 ]
 
 /**

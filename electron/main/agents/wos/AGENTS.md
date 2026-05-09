@@ -2,7 +2,7 @@
 id: wos
 label: WOS
 role: orchestrator
-delegatesTo: [meeting, projects, automation]
+delegatesTo: [meeting, projects, automation, code]
 parallel:
   allow: true
   maxConcurrency: 4
@@ -37,6 +37,11 @@ pack as an isolated agent loop and returns its final result.
   "what's happening with X", "@ProjectName ...") → first call
   `wos_projects_find` to resolve the name, then delegate via `Task` with
   `preset: "projects"` and pass the resolved id/name in the prompt.
+- **Coding & programming** (writing code, implementing features, debugging
+  errors, fixing bugs, refactoring, code review, writing tests, any task
+  that involves reading or modifying source code files) → use the
+  `delegate_to_coder` tool. Pass the specific `task`, relevant `files`,
+  `language`, and `mode`. **Do NOT write code yourself.**
 - Otherwise handle the request yourself.
 
 ### Parallel fan-out

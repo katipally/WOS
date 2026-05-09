@@ -157,7 +157,7 @@ export const subAgentTool: Tool = {
   },
 }
 
-async function runSingleSubAgent(input: SubAgentInput, ctx: ToolContext): Promise<ToolResult> {
+export async function runSingleSubAgent(input: SubAgentInput, ctx: ToolContext): Promise<ToolResult> {
     const { description, prompt, fork = true } = input
     const preset = input.presetKey ?? input.preset
     const agentId = randomUUID()
@@ -278,12 +278,19 @@ async function runSingleSubAgent(input: SubAgentInput, ctx: ToolContext): Promis
       let mode = ctx.parentMode ?? 'default'
       let systemPromptOverride: string | undefined
       let apiKeyOverride = ctx.parentApiKeyOverride
+      let reasoningEffort = ctx.parentReasoningEffort
       if (preset) {
         const agent = await resolveAgent(preset)
         if (agent.model) model = agent.model
         mode = agent.mode
         systemPromptOverride = agent.systemPrompt
         apiKeyOverride = agent.apiKeyOverride
+        // Use the preset agent's own configured reasoning effort when set,
+        // so each agent's Settings → Reasoning choice is actually respected.
+        const configEffort = (agent.config as Record<string, unknown>)?.reasoningEffort
+        if (configEffort === 'low' || configEffort === 'medium' || configEffort === 'high' || configEffort === 'max') {
+          reasoningEffort = configEffort
+        }
       }
       if (!model || model.trim() === '') {
         throw new Error(
@@ -313,7 +320,7 @@ async function runSingleSubAgent(input: SubAgentInput, ctx: ToolContext): Promis
         userMessage: prompt,
         workspacePath: ctx.workspacePath,
         mode,
-        reasoningEffort: ctx.parentReasoningEffort,
+        reasoningEffort,
         systemPromptOverride,
         apiKeyOverride,
         signal: runAbortController.signal,

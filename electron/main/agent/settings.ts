@@ -8,7 +8,7 @@ import { DEFAULT_MEETING_SYSTEM_PROMPT } from './agentDefs/meeting'
 
 export { DEFAULT_MEETING_SYSTEM_PROMPT }
 
-export type AgentKey = 'wos' | 'meeting' | string
+export type AgentKey = 'wos' | 'meeting' | 'projects' | 'automation' | 'code' | string
 
 export interface AgentRuntimeSettings {
   agentKey: string

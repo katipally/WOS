@@ -23,6 +23,7 @@ import { wosAgent } from './wos'
 import { meetingAgent } from './meeting'
 import { projectsAgent } from './projects'
 import { automationAgent } from './automation'
+import { codeAgent } from './code'
 import {
   intentAgent,
   factExtractorAgent,
@@ -96,6 +97,7 @@ const defs: Record<string, AgentDef> = {
   [meetingAgent.key]: meetingAgent,
   [projectsAgent.key]: projectsAgent,
   [automationAgent.key]: automationAgent,
+  [codeAgent.key]: codeAgent,
   [intentAgent.key]: intentAgent,
   [factExtractorAgent.key]: factExtractorAgent,
   [compactionAgent.key]: compactionAgent,
@@ -126,7 +128,7 @@ export function listVisibleAgentDefs(): AgentDef[] {
   return listAgentDefs().filter(d => d.surfaceInSettings !== false)
 }
 
-export { wosAgent, meetingAgent, projectsAgent, automationAgent }
+export { wosAgent, meetingAgent, projectsAgent, automationAgent, codeAgent }
 export {
   intentAgent,
   factExtractorAgent,
