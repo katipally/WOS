@@ -56,7 +56,7 @@ function decryptLegacyAgentKey(config: AgentConfig, kind: 'openai' | 'anthropic'
 
 /** Find the provider instance that lists `model` and return its decrypted
  * API key, if any. Used so sub-agents/intent calls inherit the right key. */
-async function resolveApiKeyForModel(model: string): Promise<string | undefined> {
+export async function resolveApiKeyForModel(model: string): Promise<string | undefined> {
   if (!model) return undefined
   for (const inst of listProviderInstances()) {
     if (!inst.enabled) continue
@@ -103,10 +103,12 @@ export async function resolveAgent(agentKey: AgentKey): Promise<AgentRuntimeSett
     || ''
 
   // Prefer a key resolved against the chosen model's provider instance; fall
-  // back to legacy in-config keys for upgrade scenarios.
-  const apiKeyOverride =
+  // back to legacy in-config keys for upgrade scenarios. Coerce empty strings
+  // to undefined so downstream `??` chains correctly fall through.
+  const resolvedKey =
     (await resolveApiKeyForModel(model))
     ?? decryptLegacyAgentKey(config, model.startsWith('claude') ? 'anthropic' : 'openai')
+  const apiKeyOverride = resolvedKey && resolvedKey.length > 0 ? resolvedKey : undefined
 
   return { agentKey, model, mode, systemPrompt, config, apiKeyOverride }
 }

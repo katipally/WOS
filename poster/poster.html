@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WOS — Your Work, Handled.</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --black: #000000;
+      --white: #ffffff;
+      --gray-100: #f5f5f7;
+      --gray-400: #86868b;
+      --gray-600: #424245;
+      --accent: #6e6cf8;
+      --accent-2: #a78bfa;
+      --accent-3: #38bdf8;
+      --accent-warm: #f472b6;
+    }
+
+    html, body {
+      width: 100%;
+      min-height: 100vh;
+      background: var(--black);
+      color: var(--white);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* ─── LAYOUT ─────────────────────────────────── */
+    .poster {
+      width: 1200px;
+      min-height: 1600px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      padding: 0 80px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* ─── AMBIENT GLOW ───────────────────────────── */
+    .bg-glow {
+      position: absolute;
+      pointer-events: none;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.18;
+    }
+    .bg-glow-1 {
+      width: 700px; height: 700px;
+      background: radial-gradient(circle, #6e6cf8, transparent 70%);
+      top: -80px; left: -140px;
+    }
+    .bg-glow-2 {
+      width: 600px; height: 600px;
+      background: radial-gradient(circle, #38bdf8, transparent 70%);
+      top: 200px; right: -160px;
+    }
+    .bg-glow-3 {
+      width: 500px; height: 500px;
+      background: radial-gradient(circle, #f472b6, transparent 70%);
+      top: 900px; left: 50%;
+      transform: translateX(-50%);
+    }
+    .bg-glow-4 {
+      width: 600px; height: 600px;
+      background: radial-gradient(circle, #a78bfa, transparent 70%);
+      bottom: 200px; right: -100px;
+    }
+
+    /* ─── HEADER ─────────────────────────────────── */
+    .header {
+      padding-top: 56px;
+      padding-bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .wordmark {
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--white);
+      opacity: 0.9;
+    }
+    .platform-badge {
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      color: var(--gray-400);
+      text-transform: uppercase;
+      border: 1px solid var(--gray-600);
+      border-radius: 20px;
+      padding: 5px 14px;
+    }
+
+    /* ─── HERO ───────────────────────────────────── */
+    .hero {
+      margin-top: 100px;
+      position: relative;
+      z-index: 1;
+    }
+    .hero-eyebrow {
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--accent-2);
+      margin-bottom: 24px;
+    }
+    .hero-headline {
+      font-size: 88px;
+      font-weight: 800;
+      line-height: 1.0;
+      letter-spacing: -0.03em;
+      color: var(--white);
+      max-width: 900px;
+    }
+    .hero-headline .dim {
+      color: var(--gray-400);
+    }
+    .hero-sub {
+      margin-top: 32px;
+      font-size: 22px;
+      font-weight: 400;
+      line-height: 1.5;
+      color: var(--gray-400);
+      max-width: 560px;
+    }
+    .hero-sub strong {
+      color: #ccc;
+      font-weight: 500;
+    }
+
+    /* ─── ORB ────────────────────────────────────── */
+    .orb-wrap {
+      display: flex;
+      justify-content: center;
+      margin-top: 80px;
+      position: relative;
+      z-index: 1;
+    }
+    .orb {
+      width: 340px;
+      height: 340px;
+      border-radius: 50%;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .orb-outer {
+      position: absolute;
+      inset: -2px;
+      border-radius: 50%;
+      background: conic-gradient(
+        from 0deg,
+        #6e6cf8,
+        #38bdf8,
+        #a78bfa,
+        #f472b6,
+        #38bdf8,
+        #6e6cf8
+      );
+      filter: blur(2px);
+      opacity: 0.7;
+    }
+    .orb-inner {
+      position: absolute;
+      inset: 3px;
+      border-radius: 50%;
+      background: radial-gradient(
+        ellipse at 38% 32%,
+        rgba(110, 108, 248, 0.55) 0%,
+        rgba(56, 189, 248, 0.3) 40%,
+        rgba(244, 114, 182, 0.2) 65%,
+        rgba(0, 0, 0, 0.92) 100%
+      );
+    }
+    .orb-core {
+      position: absolute;
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255,255,255,0.9), rgba(167,139,250,0.6) 50%, transparent 80%);
+      filter: blur(8px);
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+    }
+    .orb-ring {
+      position: absolute;
+      inset: -22px;
+      border-radius: 50%;
+      border: 1px solid rgba(110, 108, 248, 0.2);
+    }
+    .orb-ring-2 {
+      position: absolute;
+      inset: -48px;
+      border-radius: 50%;
+      border: 1px solid rgba(56, 189, 248, 0.12);
+    }
+    /* orbit dot */
+    .orb-dot {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-3);
+      box-shadow: 0 0 12px 4px rgba(56, 189, 248, 0.5);
+      top: -4px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+    .orb-dot-2 {
+      position: absolute;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent-warm);
+      box-shadow: 0 0 10px 4px rgba(244, 114, 182, 0.5);
+      bottom: -3px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
+    /* floating pills around orb */
+    .orb-pill {
+      position: absolute;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 30px;
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.7);
+      backdrop-filter: blur(12px);
+      white-space: nowrap;
+    }
+    .orb-pill-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .pill-1 { top: 30px; left: -160px; }
+    .pill-2 { top: 100px; right: -170px; }
+    .pill-3 { bottom: 80px; left: -140px; }
+    .pill-4 { bottom: 30px; right: -155px; }
+
+    /* ─── TAGLINE BREAK ───────────────────────────── */
+    .tagline-row {
+      margin-top: 88px;
+      text-align: center;
+      position: relative;
+      z-index: 1;
+    }
+    .tagline-row .tag-big {
+      font-size: 52px;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      line-height: 1.1;
+      background: linear-gradient(135deg, #fff 30%, #86868b 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .tagline-row .tag-sub {
+      margin-top: 16px;
+      font-size: 18px;
+      color: var(--gray-400);
+      line-height: 1.6;
+      max-width: 580px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    /* ─── DIVIDER ─────────────────────────────────── */
+    .divider {
+      width: 100%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--gray-600) 30%, var(--gray-600) 70%, transparent);
+      margin: 72px 0;
+      opacity: 0.5;
+    }
+
+    /* ─── FEATURE GRID ───────────────────────────── */
+    .features {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      position: relative;
+      z-index: 1;
+    }
+    .feature-card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 24px;
+      padding: 44px 40px;
+      position: relative;
+      overflow: hidden;
+    }
+    .feature-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 24px;
+      background: radial-gradient(ellipse at 0% 0%, var(--card-glow, rgba(110,108,248,0.08)) 0%, transparent 60%);
+      pointer-events: none;
+    }
+    .feature-card:nth-child(1) { --card-glow: rgba(110,108,248,0.1); }
+    .feature-card:nth-child(2) { --card-glow: rgba(56,189,248,0.1); }
+    .feature-card:nth-child(3) { --card-glow: rgba(244,114,182,0.1); }
+    .feature-card:nth-child(4) { --card-glow: rgba(167,139,250,0.1); }
+
+    .feature-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 24px;
+      font-size: 20px;
+    }
+    .icon-purple { background: rgba(110,108,248,0.18); }
+    .icon-blue   { background: rgba(56,189,248,0.18); }
+    .icon-pink   { background: rgba(244,114,182,0.18); }
+    .icon-violet { background: rgba(167,139,250,0.18); }
+
+    .feature-number {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--gray-600);
+      margin-bottom: 10px;
+    }
+    .feature-title {
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--white);
+      margin-bottom: 12px;
+    }
+    .feature-desc {
+      font-size: 15px;
+      font-weight: 400;
+      line-height: 1.65;
+      color: var(--gray-400);
+    }
+    .feature-stat {
+      margin-top: 28px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.35);
+      border-top: 1px solid rgba(255,255,255,0.07);
+      padding-top: 20px;
+      width: 100%;
+    }
+    .feature-stat span {
+      color: rgba(255,255,255,0.6);
+    }
+
+    /* ─── INTEGRATION STRIP ──────────────────────── */
+    .integrations {
+      margin-top: 80px;
+      position: relative;
+      z-index: 1;
+      text-align: center;
+    }
+    .integrations-eyebrow {
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--gray-400);
+      margin-bottom: 32px;
+    }
+    .integrations-row {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 0;
+      flex-wrap: wrap;
+    }
+    .integration-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding: 0 36px;
+      border-right: 1px solid rgba(255,255,255,0.07);
+    }
+    .integration-item:last-child {
+      border-right: none;
+    }
+    .integration-logo {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .integration-name {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--gray-400);
+    }
+
+    /* ─── BOTTOM STATEMENT ────────────────────────── */
+    .bottom-statement {
+      margin-top: 96px;
+      text-align: center;
+      position: relative;
+      z-index: 1;
+    }
+    .bottom-statement .big-text {
+      font-size: 48px;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      line-height: 1.1;
+      color: var(--white);
+    }
+    .bottom-statement .big-text .gradient {
+      background: linear-gradient(90deg, #6e6cf8, #38bdf8 40%, #a78bfa 70%, #f472b6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .bottom-statement .small-text {
+      margin-top: 20px;
+      font-size: 17px;
+      color: var(--gray-400);
+      line-height: 1.6;
+      max-width: 520px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    /* ─── FOOTER ─────────────────────────────────── */
+    .footer {
+      margin-top: 80px;
+      padding-bottom: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: relative;
+      z-index: 1;
+      border-top: 1px solid rgba(255,255,255,0.07);
+      padding-top: 36px;
+    }
+    .footer-left {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .footer-brand {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--white);
+    }
+    .footer-caption {
+      font-size: 12px;
+      color: var(--gray-600);
+    }
+    .footer-right {
+      font-size: 12px;
+      color: var(--gray-600);
+      text-align: right;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="poster">
+
+    <!-- Ambient glows -->
+    <div class="bg-glow bg-glow-1"></div>
+    <div class="bg-glow bg-glow-2"></div>
+    <div class="bg-glow bg-glow-3"></div>
+    <div class="bg-glow bg-glow-4"></div>
+
+    <!-- ─── HEADER ─── -->
+    <header class="header">
+      <div class="wordmark">WOS</div>
+      <div class="platform-badge">Available for macOS</div>
+    </header>
+
+    <!-- ─── HERO ─── -->
+    <section class="hero">
+      <p class="hero-eyebrow">Introducing WOS — Your AI Workplace</p>
+      <h1 class="hero-headline">
+        Your work,<br/>
+        <span class="dim">handled.</span>
+      </h1>
+      <p class="hero-sub">
+        Stop switching tabs. Stop writing status updates.<br/>
+        Stop missing meeting decisions.<br/>
+        <strong>Just talk to WOS.</strong>
+      </p>
+    </section>
+
+    <!-- ─── ORB ─── -->
+    <div class="orb-wrap">
+      <div class="orb">
+        <div class="orb-outer"></div>
+        <div class="orb-inner"></div>
+        <div class="orb-core"></div>
+        <div class="orb-ring">
+          <div class="orb-dot"></div>
+        </div>
+        <div class="orb-ring-2">
+          <div class="orb-dot-2"></div>
+        </div>
+
+        <!-- floating pills -->
+        <div class="orb-pill pill-1">
+          <div class="orb-pill-dot" style="background:#34d399;box-shadow:0 0 6px #34d399;"></div>
+          Meeting summarised
+        </div>
+        <div class="orb-pill pill-2">
+          <div class="orb-pill-dot" style="background:#6e6cf8;box-shadow:0 0 6px #6e6cf8;"></div>
+          Slack message sent
+        </div>
+        <div class="orb-pill pill-3">
+          <div class="orb-pill-dot" style="background:#38bdf8;box-shadow:0 0 6px #38bdf8;"></div>
+          PR reviewed
+        </div>
+        <div class="orb-pill pill-4">
+          <div class="orb-pill-dot" style="background:#f472b6;box-shadow:0 0 6px #f472b6;"></div>
+          Report ready
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── TAGLINE ─── -->
+    <div class="tagline-row">
+      <div class="tag-big">Not another chatbot.<br/>An AI that actually ships.</div>
+      <p class="tag-sub">
+        WOS connects to the tools your team lives in — and works them for you. No prompts to engineer. No tabs to juggle.
+      </p>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- ─── FEATURE GRID ─── -->
+    <div class="features">
+
+      <div class="feature-card">
+        <div class="feature-icon icon-purple">🎙</div>
+        <div class="feature-number">01</div>
+        <div class="feature-title">Never miss<br/>a decision again</div>
+        <p class="feature-desc">
+          WOS joins your Google Meet, listens, and surfaces every decision, action item, and commitment — formatted and delivered before you even close the tab.
+        </p>
+        <div class="feature-stat">
+          <span>Meetings →</span> Summaries, actions, follow-ups. Automatic.
+        </div>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon icon-blue">📊</div>
+        <div class="feature-number">02</div>
+        <div class="feature-title">Every project,<br/>always in sync</div>
+        <p class="feature-desc">
+          Ask "what's blocking the redesign?" and get a live answer — pulled from Slack, GitHub, Jira, and Google Drive in seconds. No dashboards. No hunting.
+        </p>
+        <div class="feature-stat">
+          <span>Projects →</span> Status, risks, blockers — one question away.
+        </div>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon icon-pink">⚡</div>
+        <div class="feature-number">03</div>
+        <div class="feature-title">Set it.<br/>Done.</div>
+        <p class="feature-desc">
+          Tell WOS to send a weekly Slack digest, triage new GitHub issues, or draft reports every Friday. It runs — quietly, reliably — while you focus on real work.
+        </p>
+        <div class="feature-stat">
+          <span>Automations →</span> Scheduled, event-driven, always-on.
+        </div>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon icon-violet">💬</div>
+        <div class="feature-number">04</div>
+        <div class="feature-title">Your whole stack,<br/>one conversation</div>
+        <p class="feature-desc">
+          Message a Slack channel. Close a GitHub issue. Find a Drive file. Book a meeting. WOS speaks every tool fluently — and remembers what you told it last week.
+        </p>
+        <div class="feature-stat">
+          <span>Integrations →</span> Slack · GitHub · Jira · Google · MCP
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ─── INTEGRATIONS ─── -->
+    <div class="integrations">
+      <p class="integrations-eyebrow">Works with the tools your team already uses</p>
+      <div class="integrations-row">
+        <div class="integration-item">
+          <div class="integration-logo">💬</div>
+          <div class="integration-name">Slack</div>
+        </div>
+        <div class="integration-item">
+          <div class="integration-logo">🐙</div>
+          <div class="integration-name">GitHub</div>
+        </div>
+        <div class="integration-item">
+          <div class="integration-logo">🎫</div>
+          <div class="integration-name">Jira</div>
+        </div>
+        <div class="integration-item">
+          <div class="integration-logo">📅</div>
+          <div class="integration-name">Google</div>
+        </div>
+        <div class="integration-item">
+          <div class="integration-logo">🤖</div>
+          <div class="integration-name">MCP</div>
+        </div>
+        <div class="integration-item">
+          <div class="integration-logo">🔌</div>
+          <div class="integration-name">Any API</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── BOTTOM STATEMENT ─── -->
+    <div class="bottom-statement">
+      <div class="big-text">
+        You think.<br/>
+        <span class="gradient">WOS executes.</span>
+      </div>
+      <p class="small-text">
+        Built for the employees who have too many tools, too many meetings, and not enough time. WOS gives your day back.
+      </p>
+    </div>
+
+    <!-- ─── FOOTER ─── -->
+    <footer class="footer">
+      <div class="footer-left">
+        <div class="footer-brand">WOS</div>
+        <div class="footer-caption">AI Workplace Assistant · Desktop for macOS</div>
+      </div>
+      <div class="footer-right">
+        Powered by OpenAI &amp; Anthropic<br/>
+        Encrypted. Private. Local-first.
+      </div>
+    </footer>
+
+  </div>
+</body>
+</html>

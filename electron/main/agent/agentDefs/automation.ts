@@ -5,7 +5,17 @@ const PACK_PERSONA = getAgentPack('automation')?.persona ?? ''
 
 const automationSettingsSchema: SettingDescriptor[] = [
   { key: 'model', kind: 'model', label: 'Model', description: 'Model used to plan and execute automations (scheduled, hook, and webhook runs).' },
-  { key: 'systemPrompt', kind: 'text', label: 'Custom system prompt', description: 'Optional override appended at runtime.' },
+  {
+    key: 'reasoningEffort', kind: 'enum', label: 'Reasoning effort',
+    description: 'How much the model reasons before answering. Disabled when the selected model has no reasoning support.',
+    defaultValue: 'medium',
+    options: [
+      { value: 'low', label: 'low' },
+      { value: 'medium', label: 'medium' },
+      { value: 'high', label: 'high' },
+      { value: 'max', label: 'max' },
+    ],
+  },
 ]
 
 /**
@@ -27,7 +37,7 @@ export const automationAgent: AgentDef = {
   key: 'automation',
   label: 'Automation',
   surfaceInSettings: true,
-  defaults: { model: '' },
+  defaults: { model: '', reasoningEffort: 'medium' },
   settingsSchema: automationSettingsSchema,
   systemPrompt: PACK_PERSONA,
 }

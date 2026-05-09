@@ -7,7 +7,7 @@ interface PickerModel {
   name: string
   providerId: string
   providerLabel: string
-  kind: 'openai' | 'anthropic' | 'openai-compatible'
+  kind: 'openai' | 'anthropic' | 'openai-compatible' | 'runpod'
   description?: string
 }
 

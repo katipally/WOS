@@ -101,7 +101,10 @@ export class OpenAIProvider implements ModelProvider {
   }
 
   async *stream(request: ModelRequest): AsyncGenerator<StreamEvent> {
-    const apiKey = request.apiKeyOverride ?? await getDecryptedApiKeyForInstance(request.providerId ?? this.providerId)
+    const overrideKey = request.apiKeyOverride && request.apiKeyOverride.length > 0
+      ? request.apiKeyOverride
+      : undefined
+    const apiKey = overrideKey ?? await getDecryptedApiKeyForInstance(request.providerId ?? this.providerId)
     const client = this.buildClient(apiKey)
     const reasoningEffort = mapReasoningEffort(request.reasoningEffort)
 
@@ -193,6 +196,18 @@ export class OpenAIProvider implements ModelProvider {
       }
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') return
+      const status = (err as { status?: number })?.status
+      const msg = (err as Error)?.message || String(err)
+      if (status === 401 || /401/.test(msg)) {
+        const where = this.baseURL ? ` (${this.baseURL})` : ' (api.openai.com)'
+        const e = new Error(
+          `Upstream rejected the API key${where}. Open Settings → Providers, ` +
+          `confirm the key is correct (no extra whitespace), and that the ` +
+          `model belongs to this provider. Then retry.`,
+        )
+        ;(e as Error & { status?: number }).status = 401
+        throw e
+      }
       throw err
     }
   }

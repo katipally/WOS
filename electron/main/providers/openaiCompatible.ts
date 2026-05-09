@@ -97,11 +97,35 @@ function toChatTools(tools: ModelRequest['tools']): ChatCompletionTool[] {
   }))
 }
 
+/**
+ * Reformat opaque upstream errors (especially 401s with no body) into
+ * actionable messages so the chat UI tells the user how to fix it instead
+ * of showing raw OpenAI SDK strings.
+ */
+function clarifyAuthError(err: unknown, baseURL?: string): Error {
+  const status = (err as { status?: number })?.status
+  const msg = (err as Error)?.message || String(err)
+  if (status === 401 || /401/.test(msg)) {
+    const where = baseURL ? ` (${baseURL})` : ''
+    const e = new Error(
+      `Upstream rejected the API key${where}. Open Settings → Providers, ` +
+      `confirm the key is correct (no extra whitespace), and that the model ` +
+      `belongs to this provider. Then retry.`,
+    )
+    ;(e as Error & { status?: number }).status = 401
+    return e
+  }
+  return err instanceof Error ? err : new Error(msg)
+}
+
 export class OpenAICompatibleProvider implements ModelProvider {
   constructor(private readonly opts: OpenAICompatibleOptions) {}
 
   async *stream(request: ModelRequest): AsyncGenerator<StreamEvent> {
-    const apiKey = request.apiKeyOverride ?? await getDecryptedApiKeyForInstance(request.providerId ?? this.opts.providerId)
+    const overrideKey = request.apiKeyOverride && request.apiKeyOverride.length > 0
+      ? request.apiKeyOverride
+      : undefined
+    const apiKey = overrideKey ?? await getDecryptedApiKeyForInstance(request.providerId ?? this.opts.providerId)
     if (this.opts.apiStyle === 'responses') {
       // Reuse the Responses API path implemented in OpenAIProvider.
       const inner = new OpenAIProvider({
@@ -126,6 +150,22 @@ export class OpenAICompatibleProvider implements ModelProvider {
     let outputTokens = 0
     const toolCalls: Map<number, { id: string; name: string; argsBuf: string; emittedStart: boolean }> = new Map()
 
+    // Reasoning forwarding: when the model is flagged reasoning-capable (e.g.
+    // Qwen3 on vLLM/RunPod), pass the canonical OpenAI `reasoning_effort` field
+    // and vLLM's `chat_template_kwargs.enable_thinking` simultaneously. Most
+    // vLLM versions accept either; ones that ignore both still accept the
+    // request and just won't emit `reasoning_content` deltas.
+    const reasoningCapable = modelSupportsReasoning(request.model)
+    const effort = (request.reasoningEffort === 'max' ? 'high' : request.reasoningEffort) as
+      'low' | 'medium' | 'high' | undefined
+    const enableThinking = reasoningCapable && !!effort
+    const extraReasoningBody = enableThinking
+      ? {
+          reasoning_effort: effort,
+          chat_template_kwargs: { enable_thinking: true },
+        }
+      : {}
+
     try {
       const stream = await client.chat.completions.create(
         {
@@ -134,7 +174,10 @@ export class OpenAICompatibleProvider implements ModelProvider {
           ...(tools.length ? { tools } : {}),
           stream: true,
           stream_options: { include_usage: true },
-          max_tokens: request.maxTokens ?? 16384,
+          // Reasoning models can spend many tokens thinking before answering;
+          // give them more headroom than the chat default.
+          max_tokens: request.maxTokens ?? (reasoningCapable ? 32768 : 16384),
+          ...(extraReasoningBody as Record<string, unknown>),
         },
         { signal: request.signal },
       )
@@ -147,7 +190,20 @@ export class OpenAICompatibleProvider implements ModelProvider {
         }
         if (!choice) continue
 
-        const delta = choice.delta as { content?: string; tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }> }
+        const delta = choice.delta as {
+          content?: string
+          reasoning_content?: string
+          reasoning?: string
+          tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }>
+        }
+        // vLLM (with --reasoning-parser) and some other OpenAI-compat servers
+        // stream thinking output in `delta.reasoning_content`. Map it to the
+        // same `thinking_delta` event Anthropic uses so the runner's existing
+        // reasoning UI lights up.
+        const thinking = delta.reasoning_content ?? delta.reasoning
+        if (thinking) {
+          yield { type: 'thinking_delta', content: thinking }
+        }
         if (delta.content) {
           yield { type: 'text_delta', content: delta.content }
         }
@@ -189,7 +245,85 @@ export class OpenAICompatibleProvider implements ModelProvider {
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') return
       if (request.signal?.aborted) return
-      throw err
+      // Always log to stderr so the dev tools console shows what went wrong.
+      // Without this, "no response" appears as silently empty UI when an
+      // upstream returns 400/401/timeout.
+      const msg = (err as Error)?.message || String(err)
+      console.error(
+        `[wos:provider] chat-completions stream failed against ${this.opts.baseURL} (model=${request.model}): ${msg}`,
+      )
+      // vLLM versions without `--reasoning-parser` reject `reasoning_effort`
+      // and `chat_template_kwargs` with a 400. If we sent those and the request
+      // failed, retry once without them so reasoning-capable models still
+      // respond on older runtimes.
+      if (enableThinking && /reasoning|chat_template_kwargs|extra_body|400|unsupported|unknown/i.test(msg)) {
+        try {
+          const retryStream = await client.chat.completions.create(
+            {
+              model: request.model,
+              messages,
+              ...(tools.length ? { tools } : {}),
+              stream: true,
+              stream_options: { include_usage: true },
+              max_tokens: request.maxTokens ?? (reasoningCapable ? 32768 : 16384),
+            },
+            { signal: request.signal },
+          )
+          for await (const chunk of retryStream) {
+            const choice = chunk.choices?.[0]
+            if (chunk.usage) {
+              inputTokens = chunk.usage.prompt_tokens ?? inputTokens
+              outputTokens = chunk.usage.completion_tokens ?? outputTokens
+            }
+            if (!choice) continue
+            const delta = choice.delta as {
+              content?: string
+              tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }>
+            }
+            if (delta.content) yield { type: 'text_delta', content: delta.content }
+            if (delta.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                const idx = tc.index ?? 0
+                let entry = toolCalls.get(idx)
+                if (!entry) {
+                  entry = { id: tc.id ?? `call_${idx}`, name: tc.function?.name ?? '', argsBuf: '', emittedStart: false }
+                  toolCalls.set(idx, entry)
+                }
+                if (tc.id) entry.id = tc.id
+                if (tc.function?.name) entry.name = tc.function.name
+                if (entry.name && !entry.emittedStart) {
+                  entry.emittedStart = true
+                  yield { type: 'tool_preparing', id: entry.id, name: entry.name }
+                }
+                const argDelta = tc.function?.arguments ?? ''
+                if (argDelta) {
+                  entry.argsBuf += argDelta
+                  yield { type: 'tool_arg_delta', id: entry.id, delta: argDelta }
+                }
+              }
+            }
+            if (choice.finish_reason) {
+              for (const entry of toolCalls.values()) {
+                let parsed: unknown = {}
+                try { parsed = JSON.parse(entry.argsBuf || '{}') } catch { /* leave {} */ }
+                yield { type: 'tool_use_start', id: entry.id, name: entry.name, input: parsed }
+              }
+              yield {
+                type: 'message_stop',
+                stopReason: choice.finish_reason === 'tool_calls' || toolCalls.size > 0 ? 'tool_use' : 'end_turn',
+                usage: { inputTokens, outputTokens },
+              }
+            }
+          }
+          return
+        } catch (retryErr) {
+          console.error(
+            `[wos:provider] retry without reasoning fields also failed against ${this.opts.baseURL}: ${(retryErr as Error)?.message ?? retryErr}`,
+          )
+          throw retryErr
+        }
+      }
+      throw clarifyAuthError(err, this.opts.baseURL)
     }
   }
 

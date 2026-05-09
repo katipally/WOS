@@ -13,8 +13,6 @@ export const useSettingsStore = create<SettingsStore>()(
   persist(
     (set) => ({
       loaded: false,
-      defaultModel: '',
-      reasoningEffort: 'medium',
       defaultMode: 'default',
       theme: 'dark',
       activeWorkspaceId: null,
@@ -26,12 +24,9 @@ export const useSettingsStore = create<SettingsStore>()(
       loadSettings: async () => {
         try {
           const settings = (await window.wos.getSettings()) as Partial<Settings>
-          const defaultModel = (settings.defaultModel as string) ?? ''
           const defaultMode = (settings.defaultMode as Settings['defaultMode']) ?? 'default'
           set({
             loaded: true,
-            defaultModel,
-            reasoningEffort: (settings.reasoningEffort as Settings['reasoningEffort']) ?? 'medium',
             defaultMode,
             theme: (settings.theme as Settings['theme']) ?? 'dark',
             activeWorkspaceId: (settings.activeWorkspaceId as string | null) ?? null,
@@ -40,12 +35,12 @@ export const useSettingsStore = create<SettingsStore>()(
             maxSubagentBreadth: (settings.maxSubagentBreadth as number) ?? 5,
             memoryEnabled: (settings.memoryEnabled as boolean) ?? true,
           })
-          // Mirror defaults into the agent store only if the user hasn't already
-          // overridden them on an active conversation.
+          // Mirror default mode into the agent store only if the user hasn't
+          // already overridden it on an active conversation. Per-agent model
+          // is now configured under Settings → Agents (no global default).
           const agent = useAgentStore.getState()
           if (!agent.activeConversationId) {
             useAgentStore.setState({
-              currentModel: defaultModel,
               currentMode: defaultMode,
             })
           }
@@ -57,16 +52,9 @@ export const useSettingsStore = create<SettingsStore>()(
       saveSetting: async (key, value) => {
         set({ [key]: value } as Partial<Settings>)
         await window.wos.setSetting(key, value)
-        // Keep the active conversation in sync because the runner reads its model/mode
+        // Keep the active conversation in sync because the runner reads its mode
         // from the DB row, not directly from Settings.
         const agent = useAgentStore.getState()
-        if (key === 'defaultModel') {
-          if (agent.activeConversationId) {
-            await agent.setModel(value as string)
-          } else {
-            useAgentStore.setState({ currentModel: value as string })
-          }
-        }
         if (key === 'defaultMode') {
           if (agent.activeConversationId) {
             await agent.setMode(value as string)
@@ -81,11 +69,9 @@ export const useSettingsStore = create<SettingsStore>()(
       version: 1,
       storage: createJSONStorage(() => localStorage),
       // Persist user prefs locally so the next launch can paint with the correct
-      // theme/model before the main-process DB finishes hydrating. The main DB
+      // theme before the main-process DB finishes hydrating. The main DB
       // remains the source of truth — loadSettings overwrites these on success.
       partialize: (s) => ({
-        defaultModel: s.defaultModel,
-        reasoningEffort: s.reasoningEffort,
         defaultMode: s.defaultMode,
         theme: s.theme,
         activeWorkspaceId: s.activeWorkspaceId,

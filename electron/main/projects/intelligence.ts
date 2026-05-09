@@ -6,10 +6,8 @@
  * throwing) so the UI keeps working in offline / unconfigured installs.
  */
 
-import { getDb, schema } from '../db'
-import { eq } from 'drizzle-orm'
-import { getProvider } from '../providers'
 import { resolveAgent } from '../agent/settings'
+import { getProvider } from '../providers'
 import {
   getProject,
   listActivity,
@@ -50,12 +48,6 @@ async function pickModel(projectModelOverride: string | null): Promise<{ model: 
   try {
     const agent = await resolveAgent('wos')
     if (agent.model) return { model: agent.model, apiKeyOverride: agent.apiKeyOverride }
-  } catch { /* ignore */ }
-  try {
-    const db = getDb()
-    const setting = db.select().from(schema.settings).where(eq(schema.settings.key, 'defaultModel')).get()
-    const m = (setting?.value as string)?.replace(/^"|"$/g, '')
-    if (m) return { model: m }
   } catch { /* ignore */ }
   return null
 }

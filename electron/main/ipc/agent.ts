@@ -5,6 +5,7 @@ import { getDb, schema, notifyWrite } from '../db'
 import { eq, asc, desc } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
 import { cancelSubagent } from '../tools/subAgent'
+import { resolveAgent } from '../agent/settings'
 
 // ─── /subagents slash command handling ───────────────────────────────────────
 
@@ -256,12 +257,18 @@ export function registerAgentHandlers(_win: BrowserWindow) {
     async (_event, { workspaceId, model, mode }: { workspaceId?: string; model?: string; mode?: string }) => {
       const db = getDb()
 
-      // Get defaults from settings
-      const modelSetting = db.select().from(schema.settings).where(eq(schema.settings.key, 'defaultModel')).get()
+      // Default mode still comes from settings; default model now comes from
+      // the WOS agent config (no global "default model" any more).
       const modeSetting = db.select().from(schema.settings).where(eq(schema.settings.key, 'defaultMode')).get()
-
-      const defaultModel = (modelSetting?.value as string)?.replace(/^"|"$/g, '') || ''
       const defaultMode = (modeSetting?.value as string)?.replace(/^"|"$/g, '') ?? 'default'
+
+      let resolvedModel = model ?? ''
+      if (!resolvedModel) {
+        try {
+          const wos = await resolveAgent('wos')
+          resolvedModel = (wos.model as string | undefined) ?? ''
+        } catch { /* ignore — runner will surface "no model" later */ }
+      }
 
       const id = randomUUID()
       const now = new Date()
@@ -269,7 +276,7 @@ export function registerAgentHandlers(_win: BrowserWindow) {
         id,
         title: 'New Conversation',
         workspaceId: workspaceId ?? null,
-        model: model ?? defaultModel,
+        model: resolvedModel,
         mode: mode ?? defaultMode,
         createdAt: now,
         updatedAt: now,
@@ -280,7 +287,7 @@ export function registerAgentHandlers(_win: BrowserWindow) {
         id,
         title: 'New Conversation',
         workspaceId: workspaceId ?? null,
-        model: model ?? defaultModel,
+        model: model ?? resolvedModel,
         mode: mode ?? defaultMode,
         createdAt: now,
         updatedAt: now,

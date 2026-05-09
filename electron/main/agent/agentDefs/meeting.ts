@@ -13,12 +13,16 @@ export const DEFAULT_MEETING_SYSTEM_PROMPT = PACK_PERSONA
 const meetingSettingsSchema: SettingDescriptor[] = [
   { key: 'model', kind: 'model', label: 'Model', description: 'Model used by the meeting agent.' },
   {
-    key: 'liveSource', kind: 'enum', label: 'Live transcript source', defaultValue: 'captions',
-    options: [{ value: 'captions', label: 'Live captions' }],
+    key: 'reasoningEffort', kind: 'enum', label: 'Reasoning effort',
+    description: 'How much the model reasons before answering. Disabled when the selected model has no reasoning support.',
+    defaultValue: 'medium',
+    options: [
+      { value: 'low', label: 'low' },
+      { value: 'medium', label: 'medium' },
+      { value: 'high', label: 'high' },
+      { value: 'max', label: 'max' },
+    ],
   },
-  { key: 'autoSummarize', kind: 'boolean', label: 'Auto-summarize after meeting ends', defaultValue: true },
-  { key: 'defaultSlackChannel', kind: 'string', label: 'Default Slack channel for follow-ups', defaultValue: '' },
-  { key: 'systemPrompt', kind: 'text', label: 'Custom system prompt' },
 ]
 
 export const meetingAgent: AgentDef = {
@@ -28,9 +32,7 @@ export const meetingAgent: AgentDef = {
   systemPrompt: PACK_PERSONA,
   defaults: {
     model: '',
-    liveSource: 'captions',
-    autoSummarize: true,
-    defaultSlackChannel: '',
+    reasoningEffort: 'medium',
   },
   settingsSchema: meetingSettingsSchema,
   acceptedTags: ['meetings', 'apps:google', 'apps:slack'],

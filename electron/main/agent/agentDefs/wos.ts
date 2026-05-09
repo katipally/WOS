@@ -6,14 +6,16 @@ const PACK_PERSONA = getAgentPack('wos')?.persona ?? ''
 const wosSettingsSchema: SettingDescriptor[] = [
   { key: 'model', kind: 'model', label: 'Model', description: 'Model used by the WOS agent.' },
   {
-    key: 'mode', kind: 'enum', label: 'Mode', description: 'Default response mode.', defaultValue: 'default',
+    key: 'reasoningEffort', kind: 'enum', label: 'Reasoning effort',
+    description: 'How much the model reasons before answering. Disabled when the selected model has no reasoning support.',
+    defaultValue: 'medium',
     options: [
-      { value: 'default', label: 'Default' },
-      { value: 'plan', label: 'Plan first' },
-      { value: 'concise', label: 'Concise' },
+      { value: 'low', label: 'low' },
+      { value: 'medium', label: 'medium' },
+      { value: 'high', label: 'high' },
+      { value: 'max', label: 'max' },
     ],
   },
-  { key: 'systemPrompt', kind: 'text', label: 'Custom system prompt', description: 'Optional override appended at runtime.' },
 ]
 
 /**
@@ -30,7 +32,7 @@ export const wosAgent: AgentDef = {
   surfaceInSettings: true,
   defaults: {
     model: '',
-    mode: 'default',
+    reasoningEffort: 'medium',
   },
   settingsSchema: wosSettingsSchema,
   systemPrompt: PACK_PERSONA,

@@ -7,13 +7,27 @@ import { getDb, schema, notifyWrite } from '../db'
 import type { ConversationMessage, ContentBlock } from '../providers/types'
 import { eq, asc, and, desc } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
-import { resolveAgent } from './settings'
+import { resolveAgent, resolveApiKeyForModel } from './settings'
 import { getContextWindow } from '../../../src/lib/modelCapabilities'
 import { recallMemories, buildMemoryBlock, pruneOldMemories } from '../memory/memoryService'
 import { extractAndStoreFacts } from '../memory/factExtractor'
 
 const DEBUG = process.env.WOS_DEBUG === '1'
 const dlog = (...args: unknown[]) => { if (DEBUG) console.log('[wos:runner]', ...args) }
+
+type ReasoningEffort = 'low' | 'medium' | 'high' | 'max'
+
+/**
+ * Per-agent reasoning effort lives in `agent_settings.config.reasoningEffort`
+ * and is set by the user in Settings → Agents. Defaults to 'medium' when
+ * unset or invalid. There is intentionally no global default — each agent
+ * controls its own reasoning effort.
+ */
+function readAgentReasoningEffort(settings: Awaited<ReturnType<typeof resolveAgent>> | null): ReasoningEffort {
+  const raw = (settings?.config as Record<string, unknown> | undefined)?.reasoningEffort
+  if (raw === 'low' || raw === 'medium' || raw === 'high' || raw === 'max') return raw
+  return 'medium'
+}
 
 export interface MessageBlock {
   type: string
@@ -46,7 +60,24 @@ export class AgentRunner {
 
     if (!conv) throw new Error(`Conversation ${conversationId} not found`)
 
-    // Guard: model must be selected before running the agent
+    // Guard: model must be selected before running the agent. If the
+    // conversation was created before the user picked a model, fall back to
+    // the WOS agent's currently configured model and persist it onto the row
+    // so subsequent turns are stable. This keeps existing conversations
+    // working after the user changes their default in Settings → AI & Agents.
+    if (!conv.model || conv.model.trim() === '') {
+      try {
+        const wos = await resolveAgent('wos')
+        if (wos.model && wos.model.trim()) {
+          conv.model = wos.model
+          db.update(schema.conversations)
+            .set({ model: wos.model, updatedAt: new Date() })
+            .where(eq(schema.conversations.id, conversationId))
+            .run()
+          notifyWrite()
+        }
+      } catch { /* ignore — re-throw below */ }
+    }
     if (!conv.model || conv.model.trim() === '') {
       throw new Error('No AI model selected. Please go to Settings and choose a model to get started.')
     }
@@ -197,29 +228,12 @@ export class AgentRunner {
       this.mergeEventIntoBlocks(assistantBlocks, event)
     }
 
-    // Load reasoning effort from settings
-    const settingsRow = db
-      .select()
-      .from(schema.settings)
-      .where(eq(schema.settings.key, 'reasoningEffort'))
-      .get()
-    let reasoningEffort: 'low' | 'medium' | 'high' | 'max' = 'medium'
-    if (settingsRow) {
-      try {
-        const parsed = JSON.parse(settingsRow.value as string)
-        if (parsed === 'low' || parsed === 'medium' || parsed === 'high' || parsed === 'max') {
-          reasoningEffort = parsed
-        }
-      } catch {
-        // ignore
-      }
-    }
-
     let agentSettings: Awaited<ReturnType<typeof resolveAgent>> | null = null
     let memoryEnabled = true
 
     try {
       agentSettings = await resolveAgent(conv.agentKey ?? 'wos')
+      const reasoningEffort = readAgentReasoningEffort(agentSettings)
       const intentAgentSettings = await resolveAgent('intent').catch(() => null)
       const intentModel = (intentAgentSettings?.model as string | undefined) || 'claude-haiku-4-5-20251001'
       const intentApiKeyOverride = intentAgentSettings?.apiKeyOverride
@@ -244,6 +258,16 @@ export class AgentRunner {
       const customPrompt = baseCustom || undefined
       const appendContext = memoryAppend || undefined
 
+      // Resolve the API key against the conversation's model (the model the
+      // user actually picked in chat), not the WOS agent's configured model.
+      // Otherwise selecting a runpod model in chat while the WOS agent is
+      // configured for OpenAI (or vice versa) sends the wrong key → 401.
+      const convApiKeyOverride = await resolveApiKeyForModel(conv.model)
+        .catch(() => undefined)
+      const effectiveApiKeyOverride = (convApiKeyOverride && convApiKeyOverride.length > 0)
+        ? convApiKeyOverride
+        : agentSettings!.apiKeyOverride
+
       for await (const event of queryLoop({
         model: conv.model,
         messages: history,
@@ -252,7 +276,7 @@ export class AgentRunner {
         mode: conv.mode as AgentMode,
         reasoningEffort,
         systemPromptCustom: customPrompt,
-        apiKeyOverride: agentSettings!.apiKeyOverride,
+        apiKeyOverride: effectiveApiKeyOverride,
         signal,
         permissionStore: this.permissionStore,
         onPermissionRequest: (toolName, toolId, args) =>
@@ -445,22 +469,6 @@ export class AgentRunner {
       }
     }
 
-    // Load reasoning effort
-    const settingsRow = db
-      .select()
-      .from(schema.settings)
-      .where(eq(schema.settings.key, 'reasoningEffort'))
-      .get()
-    let reasoningEffort: 'low' | 'medium' | 'high' | 'max' = 'medium'
-    if (settingsRow) {
-      try {
-        const parsed = JSON.parse(settingsRow.value as string)
-        if (parsed === 'low' || parsed === 'medium' || parsed === 'high' || parsed === 'max') {
-          reasoningEffort = parsed
-        }
-      } catch { /* ignore */ }
-    }
-
     const assistantBlocks: MessageBlock[] = []
     const assistantMsgId = randomUUID()
     let turnCompleteEmitted = false
@@ -499,6 +507,7 @@ export class AgentRunner {
 
     try {
       agentSettings2 = await resolveAgent(conv.agentKey ?? 'wos')
+      const reasoningEffort = readAgentReasoningEffort(agentSettings2)
       const intentAgentSettings2 = await resolveAgent('intent').catch(() => null)
       const intentModel2 = (intentAgentSettings2?.model as string | undefined) || 'claude-haiku-4-5-20251001'
       const intentApiKeyOverride2 = intentAgentSettings2?.apiKeyOverride
@@ -520,6 +529,13 @@ export class AgentRunner {
       const customPrompt = baseCustom || undefined
       const appendContext2 = memAppend2 || undefined
 
+      // Resolve API key against conv.model (see comment in primary run path).
+      const convApiKeyOverride2 = await resolveApiKeyForModel(conv.model)
+        .catch(() => undefined)
+      const effectiveApiKeyOverride2 = (convApiKeyOverride2 && convApiKeyOverride2.length > 0)
+        ? convApiKeyOverride2
+        : agentSettings2!.apiKeyOverride
+
       for await (const event of queryLoop({
         model: conv.model,
         messages: history,
@@ -528,7 +544,7 @@ export class AgentRunner {
         mode: conv.mode as AgentMode,
         reasoningEffort,
         systemPromptCustom: customPrompt,
-        apiKeyOverride: agentSettings2!.apiKeyOverride,
+        apiKeyOverride: effectiveApiKeyOverride2,
         signal,
         permissionStore: this.permissionStore,
         onPermissionRequest: (toolName, toolId, args) =>

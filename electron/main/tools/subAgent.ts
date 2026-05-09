@@ -285,18 +285,26 @@ async function runSingleSubAgent(input: SubAgentInput, ctx: ToolContext): Promis
         systemPromptOverride = agent.systemPrompt
         apiKeyOverride = agent.apiKeyOverride
       }
-      if (!model) {
-        const db = getDb()
-        const modelSetting = db
-          .select()
-          .from(schema.settings)
-          .where(eq(schema.settings.key, 'defaultModel'))
-          .get()
-        model = (modelSetting?.value as string)?.replace(/^"|"$/g, '') || ''
+      if (!model || model.trim() === '') {
+        throw new Error(
+          `Subagent "${preset ?? 'wos'}" has no model configured. Open Settings → Agents and pick a model for it.`,
+        )
       }
 
-      if (!model || model.trim() === '') {
-        throw new Error('No AI model selected. Please go to Settings and choose a model to get started.')
+      const db = getDb()
+      const depthRow = db
+        .select()
+        .from(schema.settings)
+        .where(eq(schema.settings.key, 'maxSubagentDepth'))
+        .get()
+      let maxDepth = 1
+      if (depthRow) {
+        try {
+          const parsed = JSON.parse(depthRow.value as string)
+          if (typeof parsed === 'number' && Number.isFinite(parsed)) {
+            maxDepth = Math.max(1, Math.min(5, Math.floor(parsed)))
+          }
+        } catch { /* ignore */ }
       }
 
       for await (const event of queryLoop({
@@ -312,7 +320,7 @@ async function runSingleSubAgent(input: SubAgentInput, ctx: ToolContext): Promis
         permissionStore: permStore,
         onPermissionRequest: ctx.onPermissionRequest,
         onAskUser: ctx.onAskUser,
-        maxDepth: 1,
+        maxDepth,
         agentKey: preset ?? 'wos',
         skipIntent: true,
         // Forward side-channel events (stdout/stderr deltas from Bash, etc.)

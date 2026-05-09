@@ -11,9 +11,17 @@ export const DEFAULT_PROJECTS_SYSTEM_PROMPT = PACK_PERSONA
 
 const projectsSettingsSchema: SettingDescriptor[] = [
   { key: 'model', kind: 'model', label: 'Model', description: 'Model used by the projects agent.' },
-  { key: 'autoSummarize', kind: 'boolean', label: 'Auto-summarize project activity', defaultValue: true },
-  { key: 'summaryStaleHours', kind: 'number', label: 'Regenerate summary after (hours)', defaultValue: 6, min: 1, max: 168 },
-  { key: 'systemPrompt', kind: 'text', label: 'Custom system prompt' },
+  {
+    key: 'reasoningEffort', kind: 'enum', label: 'Reasoning effort',
+    description: 'How much the model reasons before answering. Disabled when the selected model has no reasoning support.',
+    defaultValue: 'medium',
+    options: [
+      { value: 'low', label: 'low' },
+      { value: 'medium', label: 'medium' },
+      { value: 'high', label: 'high' },
+      { value: 'max', label: 'max' },
+    ],
+  },
 ]
 
 export const projectsAgent: AgentDef = {
@@ -23,8 +31,7 @@ export const projectsAgent: AgentDef = {
   systemPrompt: PACK_PERSONA,
   defaults: {
     model: '',
-    autoSummarize: true,
-    summaryStaleHours: 6,
+    reasoningEffort: 'medium',
   },
   settingsSchema: projectsSettingsSchema,
   acceptedTags: [

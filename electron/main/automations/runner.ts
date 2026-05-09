@@ -1,8 +1,6 @@
 import { queryLoop } from '../agent/query'
 import { PermissionStore } from '../agent/permissions'
 import { resolveAgent } from '../agent/settings'
-import { getDb, schema } from '../db'
-import { eq } from 'drizzle-orm'
 import { audit, type RunStatus } from './audit'
 import { consent } from './consent'
 import { createRunSandbox } from './sandbox'
@@ -71,17 +69,9 @@ export async function runAutomation(
   }
   let model = agent.model
   if (!model || !model.trim()) {
-    const db = getDb()
-    const modelSetting = db
-      .select()
-      .from(schema.settings)
-      .where(eq(schema.settings.key, 'defaultModel'))
-      .get()
-    model = (modelSetting?.value as string)?.replace(/^"|"$/g, '') || ''
-  }
-  if (!model || !model.trim()) {
-    audit.endRun(runId, 'error', null, 'No model configured for automations.')
-    return { runId, output: '', error: 'No model configured for automations.' }
+    const msg = 'No model configured for automations. Open Settings → Agents → Automation and pick a model.'
+    audit.endRun(runId, 'error', null, msg)
+    return { runId, output: '', error: msg }
   }
 
   const permStore = new PermissionStore()

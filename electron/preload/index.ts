@@ -98,6 +98,12 @@ contextBridge.exposeInMainWorld('wos', {
     update: (id: string, patch: unknown) => ipcRenderer.invoke('providers:update', { id, patch }),
     remove: (id: string) => ipcRenderer.invoke('providers:remove', { id }),
     refreshModels: (id: string) => ipcRenderer.invoke('providers:refresh-models', { id }),
+    addModel: (
+      id: string,
+      model: { id?: string; baseUrl?: string; name?: string; contextWindow?: number; supportsReasoning?: boolean },
+    ) => ipcRenderer.invoke('providers:add-model', { id, model }),
+    removeModel: (id: string, modelId: string) =>
+      ipcRenderer.invoke('providers:remove-model', { id, modelId }),
     test: (input: unknown) => ipcRenderer.invoke('providers:test', input),
   },
   models: {

@@ -1,13 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, Key, Settings as SettingsIcon, Info, CheckCircle2, XCircle, Loader2, RefreshCw,
-  ChevronDown, Eye, Brain, Folder, Trash2, Plus, Sparkles, ScrollText, Sun, Moon, Monitor,
+  ChevronDown, Eye, Brain, Trash2, Plus, Sparkles, ScrollText, Sun, Moon, Monitor,
   Link, BarChart2, Activity,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { ModelInfo, AgentMode } from '../../../types'
 import { useSettingsStore } from '../../../store/settingsStore'
-import { useWorkspaceStore } from '../../../store/workspaceStore'
 import { useAgentStore } from '../../../store/agentStore'
 import { modelSupportsReasoning } from '../../../lib/modelCapabilities'
 
@@ -142,65 +141,13 @@ function PreferencesSection() {
   )
 }
 
-// AI & Agents = Model + Reasoning + Agents + Workspaces
+// AI & Agents = Agents + Intent + Subagents + Memory
 function AIAgentsSection() {
-  const { defaultModel, reasoningEffort, intentEnabled, maxSubagentDepth, maxSubagentBreadth, memoryEnabled, saveSetting } = useSettingsStore()
-  const { models, loading, refresh } = useSavedModels()
-
-  const selected = models.find(m => m.id === defaultModel)
-  const supportsReasoning = selected
-    ? selected.supportsReasoning === true
-    : modelSupportsReasoning(defaultModel)
+  const { intentEnabled, maxSubagentDepth, maxSubagentBreadth, memoryEnabled, saveSetting } = useSettingsStore()
 
   return (
     <div className="space-y-10">
-      <SectionHeader title="AI & Agents" subtitle="Model, reasoning, agent configuration, and workspaces. Skills and Rules now live under Apps & MCP." />
-
-      {/* Model */}
-      <div className="space-y-6">
-        <h3 className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>Default Model</h3>
-        <Field label="Model" hint="Used for new conversations">
-          <ModelAutocomplete
-            models={models}
-            loading={loading}
-            value={defaultModel}
-            onChange={(id) => saveSetting('defaultModel', id)}
-            onRefresh={refresh}
-          />
-          {selected?.description && (
-            <div className="mt-2" style={{ color: 'var(--muted-foreground)', fontSize: '11px' }}>{selected.description}</div>
-          )}
-        </Field>
-        <Field
-          label="Reasoning Effort"
-          hint={supportsReasoning
-            ? 'Controls how much the model reasons before answering'
-            : 'The selected model does not support reasoning.'}
-        >
-          <div className={supportsReasoning ? '' : 'opacity-40 pointer-events-none'}>
-            <div className="flex items-center gap-1">
-              {(['low', 'medium', 'high', 'max'] as const).map(e => (
-                <button
-                  key={e}
-                  disabled={!supportsReasoning}
-                  onClick={() => saveSetting('reasoningEffort', e)}
-                  className="px-3 py-1.5 rounded-md capitalize transition-colors"
-                  style={{
-                    fontSize: '12px',
-                    background: reasoningEffort === e ? 'var(--amber-muted)' : 'var(--surface-base)',
-                    color: reasoningEffort === e ? 'var(--amber)' : 'var(--muted-foreground)',
-                    border: reasoningEffort === e ? '1px solid var(--surface-stronger)' : '1px solid transparent',
-                  }}
-                >
-                  {e}
-                </button>
-              ))}
-            </div>
-          </div>
-        </Field>
-      </div>
-
-      <div style={{ height: '1px', background: 'var(--border)' }} />
+      <SectionHeader title="AI & Agents" subtitle="Agent configuration and runtime safety. Pick a model per agent below — there is no global default model." />
 
       {/* Agents */}
       <div className="space-y-6">
@@ -216,7 +163,7 @@ function AIAgentsSection() {
         <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
           Automatically selects the right tools based on what you're asking — reduces noise and speeds up responses.
         </p>
-        <Field label="Enable Intent Routing" hint="Pre-classifies each message with a fast model to filter to relevant tools. The model used here is the one configured for the “Intent classifier” agent below.">
+        <Field label="Enable Intent Routing" hint="Pre-classifies each message with a fast model to filter to relevant tools. The model used here is the one configured for the “Intent classifier” agent above.">
           <div className="flex items-center gap-2">
             <button
               onClick={() => saveSetting('intentEnabled', !intentEnabled)}
@@ -242,13 +189,13 @@ function AIAgentsSection() {
           Prevent unbounded subagent spawning that can exhaust memory and API quota.
         </p>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Max Depth" hint="Nesting levels (1 = top-level only)">
+          <Field label="Max Depth" hint="Nesting levels (1 = top-level only, max 5)">
             <input
               type="number"
               min={1}
-              max={10}
+              max={5}
               value={maxSubagentDepth}
-              onChange={e => saveSetting('maxSubagentDepth', Math.max(1, parseInt(e.target.value, 10) || 3))}
+              onChange={e => saveSetting('maxSubagentDepth', Math.max(1, Math.min(5, parseInt(e.target.value, 10) || 3)))}
               className="w-full px-3 py-2 rounded-lg text-xs"
               style={{ background: 'var(--input)', border: '1px solid var(--border)', color: 'var(--foreground)' }}
             />
@@ -288,14 +235,6 @@ function AIAgentsSection() {
             {memoryEnabled ? 'Enabled' : 'Disabled'}
           </button>
         </Field>
-      </div>
-
-      <div style={{ height: '1px', background: 'var(--border)' }} />
-
-      {/* Workspaces */}
-      <div className="space-y-6">
-        <h3 className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>Workspaces</h3>
-        <WorkspacesSection />
       </div>
     </div>
   )
@@ -535,26 +474,42 @@ function AgentCard({
         }
         if (d.kind === 'enum') {
           const opts = d.options ?? []
+          // Disable the reasoning-effort dropdown when the chosen model doesn't
+          // support reasoning (capability flag from /v1/models or static map).
+          let disabled = false
+          let disabledHint: string | undefined
+          if (d.key === 'reasoningEffort') {
+            const modelId = (values.model as string) ?? ''
+            const found = models.find(m => m.id === modelId)
+            const supports = found
+              ? found.supportsReasoning === true
+              : modelSupportsReasoning(modelId)
+            disabled = !supports
+            if (disabled) disabledHint = "This model doesn't support reasoning effort"
+          }
           return (
-            <Field key={d.key} label={d.label} hint={d.description}>
-              <div className="flex flex-wrap items-center gap-1">
-                {opts.map(o => {
-                  const active = v === o.value
-                  return (
-                    <button
-                      key={o.value}
-                      onClick={() => setVal(d.key, o.value)}
-                      className="px-3 py-1 rounded-md capitalize"
-                      style={{
-                        fontSize: '11px',
-                        background: active ? 'var(--surface-raised)' : 'var(--surface-base)',
-                        color: active ? 'var(--amber)' : 'var(--muted-foreground)',
-                      }}
-                    >
-                      {o.label}
-                    </button>
-                  )
-                })}
+            <Field key={d.key} label={d.label} hint={disabledHint ?? d.description}>
+              <div className={disabled ? 'opacity-40 pointer-events-none' : ''}>
+                <div className="flex flex-wrap items-center gap-1">
+                  {opts.map(o => {
+                    const active = v === o.value
+                    return (
+                      <button
+                        key={o.value}
+                        disabled={disabled}
+                        onClick={() => setVal(d.key, o.value)}
+                        className="px-3 py-1 rounded-md capitalize"
+                        style={{
+                          fontSize: '11px',
+                          background: active ? 'var(--surface-raised)' : 'var(--surface-base)',
+                          color: active ? 'var(--amber)' : 'var(--muted-foreground)',
+                        }}
+                      >
+                        {o.label}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
             </Field>
           )
@@ -812,6 +767,7 @@ function ProvidersSection() {
 function ProviderRow({ provider, onChanged }: { provider: ProviderInstanceSummary; onChanged: () => void }) {
   const [busy, setBusy] = useState<'refresh' | 'remove' | 'toggle' | null>(null)
   const [keyInput, setKeyInput] = useState('')
+  const [showAddModel, setShowAddModel] = useState(false)
 
   const refresh = async () => {
     setBusy('refresh')
@@ -925,21 +881,121 @@ function ProviderRow({ provider, onChanged }: { provider: ProviderInstanceSummar
           Update key
         </button>
       </div>
+      {(provider.kind === 'openai-compatible' || provider.kind === 'runpod') && (
+        <div className="pt-1 space-y-2">
+          {provider.kind === 'runpod' && (provider.models?.length ?? 0) > 0 && (
+            <div className="space-y-1">
+              {(provider.models ?? []).map(m => (
+                <RunpodEndpointRow
+                  key={m.id}
+                  providerId={provider.id}
+                  model={m}
+                  onChanged={onChanged}
+                />
+              ))}
+            </div>
+          )}
+          {showAddModel ? (
+            <AddManualModelDialog
+              providerId={provider.id}
+              providerKind={provider.kind}
+              onClose={() => setShowAddModel(false)}
+              onAdded={() => { setShowAddModel(false); onChanged() }}
+            />
+          ) : (
+            <button
+              onClick={() => setShowAddModel(true)}
+              className="flex items-center gap-2 px-2 py-1 rounded-md"
+              style={{ background: 'var(--surface-base)', color: 'var(--muted-foreground)', border: '1px solid var(--border)', fontSize: '11px' }}
+            >
+              <Plus size={11} /> {provider.kind === 'runpod' ? 'Add endpoint' : 'Add model manually'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RunpodEndpointRow({
+  providerId,
+  model,
+  onChanged,
+}: {
+  providerId: string
+  model: ModelInfo
+  onChanged: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const remove = async () => {
+    if (!window.confirm(`Remove endpoint for "${model.id}"?`)) return
+    setBusy(true)
+    try {
+      const r = await window.wos.providers.removeModel(providerId, model.id)
+      if (r.success) {
+        toast.success('Endpoint removed')
+        onChanged()
+      } else {
+        toast.error(r.error ?? 'Failed to remove endpoint')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div
+      className="flex items-center gap-2 px-2 py-1.5 rounded-md"
+      style={{ background: 'var(--surface-base)', border: '1px solid var(--border)' }}
+    >
+      <div className="flex-1 min-w-0">
+        <div style={{ color: 'var(--foreground)', fontSize: '12px' }} className="truncate">
+          {model.name || model.id}
+        </div>
+        <div
+          className="font-mono truncate"
+          style={{ color: 'var(--muted-foreground)', fontSize: '10px' }}
+          title={model.baseUrl ?? ''}
+        >
+          {model.baseUrl ?? '(no base URL)'}
+        </div>
+      </div>
+      <button
+        onClick={remove}
+        disabled={busy}
+        className="p-1 rounded-md hover:text-red-400"
+        title="Remove endpoint"
+        style={{ color: 'var(--border-strong)' }}
+      >
+        {busy ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+      </button>
     </div>
   )
 }
 
 function AddProviderForm({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
-  const [kind, setKind] = useState<'openai' | 'anthropic' | 'openai-compatible'>('openai')
+  const [kind, setKind] = useState<'openai' | 'anthropic' | 'openai-compatible' | 'runpod'>('openai')
   const [label, setLabel] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [headersJson, setHeadersJson] = useState('')
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const defaultLabelFor = (k: typeof kind) => (
+    k === 'openai' ? 'OpenAI'
+    : k === 'anthropic' ? 'Anthropic'
+    : k === 'runpod' ? 'RunPod'
+    : 'OpenAI-compatible'
+  )
 
   const submit = async () => {
-    if (!apiKey || !label) {
-      toast.error('Label and API key are required')
+    setError(null)
+    if (!apiKey.trim()) {
+      setError('API key is required')
+      return
+    }
+    if (kind === 'openai-compatible' && !baseUrl.trim()) {
+      setError('Base URL is required')
       return
     }
     let headers: Record<string, string> | null = null
@@ -947,46 +1003,57 @@ function AddProviderForm({ onClose, onAdded }: { onClose: () => void; onAdded: (
       try {
         headers = JSON.parse(headersJson)
       } catch {
-        toast.error('Custom headers must be valid JSON')
+        setError('Custom headers must be valid JSON')
         return
       }
     }
+    const finalLabel = label.trim() || defaultLabelFor(kind)
     setBusy(true)
     try {
       const r = await window.wos.providers.add({
         kind,
-        label,
+        label: finalLabel,
         apiKey,
-        baseUrl: kind === 'openai-compatible' ? baseUrl : null,
+        baseUrl: kind === 'openai-compatible' ? baseUrl.trim() : null,
         customHeaders: headers,
         enabled: true,
       })
       if (!r.success || !r.id) {
-        toast.error(r.error ?? 'Failed to add provider')
+        setError(r.error ?? 'Failed to add provider')
         return
       }
-      const refresh = await window.wos.providers.refreshModels(r.id)
-      if (!refresh.success) {
-        toast.error(refresh.error ?? 'Provider added, but model fetch failed')
+      if (kind === 'runpod') {
+        // RunPod has no provider-level URL and no global model list; user adds
+        // each model individually with its own endpoint URL.
+        toast.success(`Added ${finalLabel}. Add a model to start using it.`)
       } else {
-        toast.success(`Added ${label} (${refresh.models?.length ?? 0} models)`)
+        const refresh = await window.wos.providers.refreshModels(r.id)
+        if (!refresh.success) {
+          toast.error(refresh.error ?? 'Provider added, but model fetch failed. You can add models manually below.')
+        } else {
+          toast.success(`Added ${finalLabel} (${refresh.models?.length ?? 0} models)`)
+        }
       }
       onAdded()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
     }
   }
 
   const inputStyle = { background: 'var(--input)', border: '1px solid var(--border)', color: 'var(--foreground)', fontSize: '12px' }
+  const showBaseUrl = kind === 'openai-compatible'
+  const baseUrlHint = 'e.g. https://openrouter.ai/api/v1'
 
   return (
     <div className="rounded-md p-3 space-y-3" style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
       <Field label="Kind">
-        <div className="flex items-center gap-1">
-          {(['openai', 'anthropic', 'openai-compatible'] as const).map(k => (
+        <div className="flex flex-wrap items-center gap-1">
+          {(['openai', 'anthropic', 'openai-compatible', 'runpod'] as const).map(k => (
             <button
               key={k}
-              onClick={() => setKind(k)}
+              onClick={() => { setKind(k); setError(null) }}
               className="px-3 py-1 rounded-md"
               style={{
                 fontSize: '11px',
@@ -999,27 +1066,32 @@ function AddProviderForm({ onClose, onAdded }: { onClose: () => void; onAdded: (
           ))}
         </div>
       </Field>
-      <Field label="Label">
-        <input value={label} onChange={e => setLabel(e.target.value)} className="w-full px-3 py-1.5 rounded-md outline-none" style={inputStyle} placeholder="e.g. Personal OpenAI" />
+      <Field label="Label (optional)" hint={`Defaults to "${defaultLabelFor(kind)}" if left blank`}>
+        <input value={label} onChange={e => setLabel(e.target.value)} className="w-full px-3 py-1.5 rounded-md outline-none" style={inputStyle} placeholder={defaultLabelFor(kind)} />
       </Field>
       <Field label="API Key">
         <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} className="w-full px-3 py-1.5 rounded-md outline-none" style={inputStyle} />
       </Field>
+      {showBaseUrl && (
+        <Field label="Base URL" hint={baseUrlHint}>
+          <input value={baseUrl} onChange={e => setBaseUrl(e.target.value)} className="w-full px-3 py-1.5 rounded-md outline-none" style={inputStyle} />
+        </Field>
+      )}
       {kind === 'openai-compatible' && (
-        <>
-          <Field label="Base URL" hint="e.g. https://openrouter.ai/api/v1">
-            <input value={baseUrl} onChange={e => setBaseUrl(e.target.value)} className="w-full px-3 py-1.5 rounded-md outline-none" style={inputStyle} />
-          </Field>
-          <Field label="Custom headers (JSON, optional)">
-            <textarea
-              value={headersJson}
-              onChange={e => setHeadersJson(e.target.value)}
-              className="w-full min-h-[60px] px-3 py-2 rounded-md outline-none font-mono"
-              style={inputStyle}
-              placeholder='{"HTTP-Referer": "https://example.com"}'
-            />
-          </Field>
-        </>
+        <Field label="Custom headers (JSON, optional)">
+          <textarea
+            value={headersJson}
+            onChange={e => setHeadersJson(e.target.value)}
+            className="w-full min-h-[60px] px-3 py-2 rounded-md outline-none font-mono"
+            style={inputStyle}
+            placeholder='{"HTTP-Referer": "https://example.com"}'
+          />
+        </Field>
+      )}
+      {error && (
+        <div className="rounded-md px-3 py-2" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5', fontSize: '11px' }}>
+          {error}
+        </div>
       )}
       <div className="flex items-center gap-2">
         <button
@@ -1043,56 +1115,98 @@ function AddProviderForm({ onClose, onAdded }: { onClose: () => void; onAdded: (
   )
 }
 
-// ---------------- Workspaces ----------------
+// ---------------- Manual model dialog ----------------
 
-function WorkspacesSection() {
-  const { workspaces, activeWorkspaceId, addWorkspace, removeWorkspace, setActiveWorkspace } = useWorkspaceStore()
+function AddManualModelDialog({ providerId, providerKind, onClose, onAdded }: { providerId: string; providerKind: 'openai-compatible' | 'runpod'; onClose: () => void; onAdded: () => void }) {
+  const isRunpod = providerKind === 'runpod'
+  const [id, setId] = useState('')
+  const [baseUrl, setBaseUrl] = useState('')
+  const [name, setName] = useState('')
+  const [contextWindow, setContextWindow] = useState('')
+  const [supportsReasoning, setSupportsReasoning] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async () => {
+    setError(null)
+    if (isRunpod) {
+      if (!baseUrl.trim()) { setError('Endpoint URL is required (e.g. https://api.runpod.ai/v2/{endpointId}/openai/v1)'); return }
+    } else {
+      if (!id.trim()) { setError('Model id is required'); return }
+    }
+    setBusy(true)
+    try {
+      const ctx = contextWindow.trim() ? Math.max(0, parseInt(contextWindow, 10) || 0) : undefined
+      const r = await window.wos.providers.addModel(providerId, {
+        id: id.trim() || undefined,
+        baseUrl: isRunpod ? baseUrl.trim() : undefined,
+        name: name.trim() || undefined,
+        contextWindow: ctx,
+        supportsReasoning,
+      })
+      if (!r.success) {
+        setError(r.error ?? 'Failed to add model')
+        return
+      }
+      toast.success('Model added')
+      onAdded()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const inputStyle = { background: 'var(--input)', border: '1px solid var(--border)', color: 'var(--foreground)', fontSize: '12px' }
+
   return (
-    <div className="space-y-6">
-      <SectionHeader title="Workspaces" subtitle="Directories the agent can access" />
-      <div className="space-y-2">
-        {workspaces.length === 0 && (
-          <div style={{ color: 'var(--muted-foreground)', fontSize: '12px' }}>No workspaces yet</div>
-        )}
-        {workspaces.map(ws => (
-          <div
-            key={ws.id}
-            className="flex items-center gap-2 px-3 py-2 rounded-md"
-            style={{ background: 'var(--card)', border: '1px solid var(--border)' }}
-          >
-            <Folder size={12} className="shrink-0" style={{ color: 'var(--muted-foreground)' }} />
-            <div className="flex-1 min-w-0">
-              <div className="truncate" style={{ color: 'var(--foreground)', fontSize: '12px' }}>{ws.name}</div>
-              <div className="truncate font-mono" style={{ color: 'var(--border-strong)', fontSize: '10px' }}>{ws.path}</div>
-            </div>
-            {activeWorkspaceId === ws.id ? (
-              <span className="text-emerald-400" style={{ fontSize: '10px' }}>Active</span>
-            ) : (
-              <button
-                onClick={() => setActiveWorkspace(ws.id)}
-                className="hover:opacity-100 opacity-70 transition-opacity"
-                style={{ color: 'var(--secondary-foreground)', fontSize: '11px' }}
-              >
-                Set active
-              </button>
-            )}
-            <button
-              onClick={() => removeWorkspace(ws.id)}
-              className="p-1 rounded hover:text-red-400 transition-colors"
-              style={{ color: 'var(--border-strong)' }}
-            >
-              <Trash2 size={12} />
-            </button>
-          </div>
-        ))}
+    <div className="rounded-md p-3 space-y-3 mt-2" style={{ background: 'var(--surface-subtle)', border: '1px solid var(--border)' }}>
+      {isRunpod ? (
+        <>
+          <Field label="Endpoint URL" hint="https://api.runpod.ai/v2/{endpointId}/openai/v1 — model id is auto-detected">
+            <input value={baseUrl} onChange={e => setBaseUrl(e.target.value)} className="w-full px-3 py-1.5 rounded-md outline-none" style={inputStyle} placeholder="https://api.runpod.ai/v2/abc123/openai/v1" />
+          </Field>
+          <Field label="Model ID (optional fallback)" hint="Used only if /v1/models can't be reached">
+            <input value={id} onChange={e => setId(e.target.value)} className="w-full px-3 py-1.5 rounded-md outline-none" style={inputStyle} placeholder="meta-llama/Llama-3-70b-instruct" />
+          </Field>
+        </>
+      ) : (
+        <Field label="Model ID" hint="The exact id the API expects (e.g. meta-llama/Llama-3-70b-instruct)">
+          <input value={id} onChange={e => setId(e.target.value)} className="w-full px-3 py-1.5 rounded-md outline-none" style={inputStyle} />
+        </Field>
+      )}
+      <Field label="Display name (optional)">
+        <input value={name} onChange={e => setName(e.target.value)} className="w-full px-3 py-1.5 rounded-md outline-none" style={inputStyle} />
+      </Field>
+      <Field label="Context window (optional)">
+        <input type="number" min={0} value={contextWindow} onChange={e => setContextWindow(e.target.value)} className="w-full px-3 py-1.5 rounded-md outline-none" style={inputStyle} placeholder="e.g. 128000" />
+      </Field>
+      <Field label="Supports reasoning effort">
+        <button
+          onClick={() => setSupportsReasoning(s => !s)}
+          className="px-3 py-1.5 rounded-md text-xs"
+          style={{
+            background: supportsReasoning ? 'var(--amber-muted)' : 'var(--surface-base)',
+            color: supportsReasoning ? 'var(--amber)' : 'var(--muted-foreground)',
+            border: supportsReasoning ? '1px solid var(--surface-stronger)' : '1px solid var(--border)',
+          }}
+        >
+          {supportsReasoning ? 'Yes' : 'No'}
+        </button>
+      </Field>
+      {error && (
+        <div className="rounded-md px-3 py-2" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5', fontSize: '11px' }}>
+          {error}
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <button onClick={submit} disabled={busy} className="px-3 py-1.5 rounded-md disabled:opacity-50" style={{ background: 'var(--surface-raised)', color: 'var(--amber)', border: '1px solid var(--surface-strong)', fontSize: '12px' }}>
+          {busy ? (isRunpod ? 'Fetching…' : 'Adding…') : (isRunpod ? 'Fetch & add' : 'Add model')}
+        </button>
+        <button onClick={onClose} disabled={busy} className="px-3 py-1.5 rounded-md" style={{ background: 'var(--surface-base)', color: 'var(--muted-foreground)', border: '1px solid var(--border)', fontSize: '12px' }}>
+          Cancel
+        </button>
       </div>
-      <button
-        onClick={() => addWorkspace()}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors"
-        style={{ background: 'var(--surface-raised)', color: 'var(--amber)', border: '1px solid var(--surface-strong)', fontSize: '12px' }}
-      >
-        <Plus size={12} /> Open workspace…
-      </button>
     </div>
   )
 }

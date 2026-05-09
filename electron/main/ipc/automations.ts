@@ -8,8 +8,6 @@ import { refreshTrayMenu } from '../tray'
 import { listConnections, listAvailableApps } from '../apps/manager'
 import { resolveAgent } from '../agent/settings'
 import { getProvider } from '../providers'
-import { getDb, schema } from '../db'
-import { eq } from 'drizzle-orm'
 
 export function registerAutomationsHandlers(): void {
   ipcMain.handle('automations:list', (_evt, args?: { kind?: AutomationKind; enabled?: boolean }) => {
@@ -109,13 +107,7 @@ export function registerAutomationsHandlers(): void {
     }
 
     if (!model) {
-      const db = getDb()
-      const modelSetting = db.select().from(schema.settings).where(eq(schema.settings.key, 'defaultModel')).get()
-      model = (modelSetting?.value as string)?.replace(/^"|"$/g, '') || ''
-    }
-
-    if (!model) {
-      return { ok: false, error: 'No AI model configured. Set a model in Settings to use this feature.' }
+      return { ok: false, error: 'No AI model configured. Open Settings → Agents → Automation (or WOS) and pick a model.' }
     }
 
     const systemPrompt = [

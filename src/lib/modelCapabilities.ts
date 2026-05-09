@@ -13,6 +13,12 @@ export function modelSupportsReasoning(id: string): boolean {
   if (/reasoning|thinking/.test(s)) return true
   // DeepSeek R-series reasoning models.
   if (/^deepseek-r/.test(s)) return true
+  // Qwen3 family — Qwen3, Qwen-3, Qwen3.5, Qwen35, including HF-style
+  // org/name slugs like "thejesraj/wos-main-qwen35". All Qwen3 variants
+  // support thinking via vLLM `enable_thinking` / `reasoning_effort`.
+  if (/qwen-?3/.test(s)) return true
+  // gpt-oss reasoning family (OpenAI open-weights, served via vLLM/runpod).
+  if (/gpt-oss/.test(s)) return true
   // Anthropic extended-thinking capable families (Claude 4+ Opus/Sonnet/Haiku).
   if (/^claude-(opus|sonnet|haiku)-[4-9]/.test(s)) return true
   if (/^claude-[4-9]/.test(s)) return true

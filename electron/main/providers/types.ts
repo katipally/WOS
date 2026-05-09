@@ -48,7 +48,7 @@ export interface TokenUsage {
   outputTokens: number
 }
 
-export type ProviderKind = 'openai' | 'anthropic' | 'openai-compatible'
+export type ProviderKind = 'openai' | 'anthropic' | 'openai-compatible' | 'runpod'
 export type ApiStyle = 'responses' | 'chat-completions'
 
 export interface ModelInfo {
@@ -58,6 +58,10 @@ export interface ModelInfo {
   providerId: string
   /** What kind of upstream the providerId corresponds to. */
   kind: ProviderKind
+  /** Per-model base URL. Currently only set for `runpod`, where every model
+   *  is its own serverless endpoint at `https://api.runpod.ai/v2/{id}/openai/v1`.
+   *  For other kinds the provider-level baseUrl is used. */
+  baseUrl?: string
   contextWindow?: number
   supportsReasoning?: boolean
   supportsVision?: boolean

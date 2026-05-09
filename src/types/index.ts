@@ -115,7 +115,10 @@ export interface ModelInfo {
   /** Provider instance id (uuid). May be a built-in id like 'anthropic' or 'openai'. */
   providerId: string
   /** API style of the provider instance. */
-  kind: 'openai' | 'anthropic' | 'openai-compatible'
+  kind: 'openai' | 'anthropic' | 'openai-compatible' | 'runpod'
+  /** Per-model base URL (currently only for runpod, where every model has its
+   *  own serverless endpoint URL). */
+  baseUrl?: string
   contextWindow?: number
   supportsReasoning?: boolean
   supportsVision?: boolean
@@ -129,8 +132,6 @@ export interface FileAttachment {
 }
 
 export interface Settings {
-  defaultModel: string
-  reasoningEffort: 'low' | 'medium' | 'high' | 'max'
   defaultMode: AgentMode
   theme: 'dark' | 'light' | 'system'
   activeWorkspaceId: string | null

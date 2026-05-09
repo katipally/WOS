@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { PanelLeft, Cpu, FolderOpen, Check, Plus, ChevronDown } from 'lucide-react'
+import { PanelLeft, Cpu, FolderOpen, Check, Plus, ChevronDown, Trash2 } from 'lucide-react'
 import type { ViewType } from '../../../types'
 import { useAgentStore } from '../../../store/agentStore'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
@@ -153,9 +153,10 @@ export function TopBar({ currentView, isSidebarCollapsed, onToggleSidebar, onRen
 }
 
 function WorkspacePicker({ activeConversationId }: WorkspacePickerProps) {
-  const { workspaces, activeWorkspace, setActiveWorkspace, addWorkspace } = useWorkspaceStore()
+  const { workspaces, activeWorkspace, setActiveWorkspace, addWorkspace, removeWorkspace } = useWorkspaceStore()
   const { setConversationWorkspace } = useAgentStore()
   const [open, setOpen] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -174,6 +175,26 @@ function WorkspacePicker({ activeConversationId }: WorkspacePickerProps) {
     }
     setOpen(false)
   }
+
+  const handleDelete = async (id: string) => {
+    // Block deleting the last workspace.
+    if (workspaces.length <= 1) {
+      setConfirmDelete(null)
+      return
+    }
+    const wasActive = activeWorkspace?.id === id
+    await removeWorkspace(id)
+    if (wasActive) {
+      const next = workspaces.find(w => w.id !== id) ?? null
+      await setActiveWorkspace(next ? next.id : null)
+      if (activeConversationId) {
+        await setConversationWorkspace(activeConversationId, next ? next.id : null)
+      }
+    }
+    setConfirmDelete(null)
+  }
+
+  const confirmTarget = confirmDelete ? workspaces.find(w => w.id === confirmDelete) : null
 
   return (
     <div ref={ref} className="relative" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties & { WebkitAppRegion?: string }}>
@@ -196,7 +217,7 @@ function WorkspacePicker({ activeConversationId }: WorkspacePickerProps) {
             background: 'var(--popover)',
             border: '1px solid var(--border-strong)',
             boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-            minWidth: '220px',
+            minWidth: '240px',
           }}
         >
           <div
@@ -214,16 +235,30 @@ function WorkspacePicker({ activeConversationId }: WorkspacePickerProps) {
             <span className={activeWorkspace ? 'ml-4' : ''}>No workspace</span>
           </button>
           {workspaces.map(ws => (
-            <button
+            <div
               key={ws.id}
-              onClick={() => handleSelect(ws.id)}
-              className="w-full text-left px-3 py-1.5 wos-hover-sm flex items-center gap-2"
+              className="w-full px-3 py-1.5 wos-hover-sm flex items-center gap-2"
               style={{ fontSize: '12px', color: 'var(--foreground)' }}
             >
-              {activeWorkspace?.id === ws.id && <Check size={10} style={{ color: 'var(--amber)' }} />}
-              <FolderOpen size={10} style={{ color: 'var(--zinc-600)' }} className="shrink-0" />
-              <span className="truncate">{ws.name}</span>
-            </button>
+              <button
+                onClick={() => handleSelect(ws.id)}
+                className="flex-1 flex items-center gap-2 text-left min-w-0"
+                style={{ color: 'var(--foreground)' }}
+              >
+                {activeWorkspace?.id === ws.id && <Check size={10} style={{ color: 'var(--amber)' }} />}
+                <FolderOpen size={10} style={{ color: 'var(--zinc-600)' }} className="shrink-0" />
+                <span className="truncate">{ws.name}</span>
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setConfirmDelete(ws.id) }}
+                disabled={workspaces.length <= 1}
+                className="p-1 rounded hover:text-red-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                title={workspaces.length <= 1 ? "Can't delete the last workspace" : 'Remove workspace'}
+                style={{ color: 'var(--zinc-600)' }}
+              >
+                <Trash2 size={10} />
+              </button>
+            </div>
           ))}
           <button
             onClick={async () => { await addWorkspace(); setOpen(false) }}
@@ -233,6 +268,40 @@ function WorkspacePicker({ activeConversationId }: WorkspacePickerProps) {
             <Plus size={10} style={{ color: 'var(--zinc-600)' }} />
             Open workspace…
           </button>
+        </div>
+      )}
+      {confirmTarget && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.5)' }}
+          onClick={() => setConfirmDelete(null)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="rounded-xl p-4 max-w-sm w-full mx-4 space-y-3"
+            style={{ background: 'var(--popover)', border: '1px solid var(--border-strong)', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
+          >
+            <div style={{ color: 'var(--foreground)', fontSize: '13px', fontWeight: 500 }}>Remove workspace?</div>
+            <div style={{ color: 'var(--zinc-400)', fontSize: '12px' }}>
+              This removes <span className="font-mono">{confirmTarget.name}</span> from WOS. The folder on disk is not deleted.
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                onClick={() => setConfirmDelete(null)}
+                className="px-3 py-1.5 rounded-md"
+                style={{ background: 'var(--surface-base)', color: 'var(--muted-foreground)', border: '1px solid var(--border)', fontSize: '12px' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDelete(confirmTarget.id)}
+                className="px-3 py-1.5 rounded-md"
+                style={{ background: 'rgba(239,68,68,0.15)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.3)', fontSize: '12px' }}
+              >
+                Remove
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

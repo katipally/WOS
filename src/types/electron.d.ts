@@ -49,7 +49,15 @@ interface WosAPI {
     update: (id: string, patch: ProviderInstancePatchInput) => Promise<{ success: boolean; error?: string }>
     remove: (id: string) => Promise<{ success: boolean }>
     refreshModels: (id: string) => Promise<{ success: boolean; models?: import('./index').ModelInfo[]; error?: string }>
-    test: (input: { id?: string; baseUrl?: string; apiKey: string; kind?: 'openai' | 'anthropic' | 'openai-compatible' }) =>
+    addModel: (
+      id: string,
+      model: { id?: string; baseUrl?: string; name?: string; contextWindow?: number; supportsReasoning?: boolean },
+    ) => Promise<{ success: boolean; models?: import('./index').ModelInfo[]; error?: string }>
+    removeModel: (
+      id: string,
+      modelId: string,
+    ) => Promise<{ success: boolean; models?: import('./index').ModelInfo[]; error?: string }>
+    test: (input: { id?: string; baseUrl?: string; apiKey: string; kind?: 'openai' | 'anthropic' | 'openai-compatible' | 'runpod' }) =>
       Promise<{ ok: boolean; modelCount?: number; error?: string }>
   }
   models: {
@@ -227,7 +235,7 @@ interface AgentSettingsSaveInput {
 
 interface ProviderInstanceSummary {
   id: string
-  kind: 'openai' | 'anthropic' | 'openai-compatible'
+  kind: 'openai' | 'anthropic' | 'openai-compatible' | 'runpod'
   label: string
   baseUrl?: string | null
   enabled: boolean
@@ -240,7 +248,7 @@ interface ProviderInstanceSummary {
 
 interface ProviderInstanceCreateInput {
   id?: string
-  kind: 'openai' | 'anthropic' | 'openai-compatible'
+  kind: 'openai' | 'anthropic' | 'openai-compatible' | 'runpod'
   label: string
   apiKey: string
   baseUrl?: string | null

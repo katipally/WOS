@@ -8,6 +8,8 @@ import {
   updateProviderInstance,
   removeProviderInstance,
   refreshProviderModels,
+  addManualModel,
+  removeManualModel,
   listAllModels,
   getProviderById,
   type AddProviderOptions,
@@ -130,7 +132,7 @@ export function registerSettingsHandlers() {
     try {
       const summary = await addProviderInstance(opts)
       notifyWrite()
-      return { success: true, provider: summary }
+      return { success: true, id: summary.id, provider: summary }
     } catch (err) {
       return { success: false, error: (err as Error).message }
     }
@@ -165,6 +167,41 @@ export function registerSettingsHandlers() {
       return { success: false, error: (err as Error).message, models: [] }
     }
   })
+
+  ipcMain.handle(
+    'providers:add-model',
+    async (
+      _event,
+      {
+        id,
+        model,
+      }: {
+        id: string
+        model: { id?: string; baseUrl?: string; name?: string; contextWindow?: number; supportsReasoning?: boolean }
+      },
+    ) => {
+      try {
+        const models = await addManualModel(id, model)
+        notifyWrite()
+        return { success: true, models }
+      } catch (err) {
+        return { success: false, error: (err as Error).message, models: [] }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    'providers:remove-model',
+    (_event, { id, modelId }: { id: string; modelId: string }) => {
+      try {
+        const models = removeManualModel(id, modelId)
+        notifyWrite()
+        return { success: true, models }
+      } catch (err) {
+        return { success: false, error: (err as Error).message, models: [] }
+      }
+    },
+  )
 
   ipcMain.handle('providers:test', async (_event, { id, apiKey }: { id: string; apiKey?: string }) => {
     try {
