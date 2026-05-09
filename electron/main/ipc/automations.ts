@@ -8,7 +8,8 @@ import { answerQuestion, listPending } from '../automations/questions'
 import { refreshTrayMenu } from '../tray'
 import { listConnections, listAvailableApps } from '../apps/manager'
 import { getSnapshot } from '../context/snapshotManager'
-import { resolveAgent } from '../agent/settings'
+import { resolveAgent, resolveApiKeyForModel } from '../agent/settings'
+
 import { getProvider } from '../providers'
 
 // Placeholder keys that map to specific app snapshot scopes

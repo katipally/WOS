@@ -1,7 +1,8 @@
 import { BrowserWindow, Notification } from 'electron'
 import { queryLoop } from '../agent/query'
 import { PermissionStore } from '../agent/permissions'
-import { resolveAgent } from '../agent/settings'
+import { resolveAgent, resolveApiKeyForModel } from '../agent/settings'
+
 import { audit, type RunStatus } from './audit'
 import { consent } from './consent'
 import { createRunSandbox } from './sandbox'

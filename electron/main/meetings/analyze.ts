@@ -1,8 +1,6 @@
 import { getProvider } from '../providers'
-import { resolveAgent, resolveApiKeyForModel } from '../agent/settings'
+import { resolveAgent } from '../agent/settings'
 
-// DEMO: force GPT-4.5 for meeting analysis regardless of agent settings
-const MEETING_DEMO_MODEL = 'gpt-5.4'
 
 export interface MeetingAnalysisResult {
   summary: string
@@ -114,13 +112,7 @@ export async function analyzeTranscript(transcript: string, title?: string, sign
   const fallback = await resolveAgent('meeting')
   const resolved = meetingAnalyzeSettings && meetingAnalyzeSettings.model ? meetingAnalyzeSettings : fallback
 
-  // DEMO: force GPT-4.5 — swap MEETING_DEMO_MODEL above to change
-  const demoApiKey = await resolveApiKeyForModel(MEETING_DEMO_MODEL)
-  const agent = {
-    ...resolved,
-    model: MEETING_DEMO_MODEL,
-    apiKeyOverride: demoApiKey ?? resolved.apiKeyOverride,
-  }
+  const agent = resolved
 
   const systemPrompt = `${agent.systemPrompt || fallback.systemPrompt || ''}
 

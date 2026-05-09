@@ -7,6 +7,7 @@
  */
 
 import { resolveAgent } from '../agent/settings'
+
 import { getProvider } from '../providers'
 import {
   getProject,
@@ -38,13 +39,7 @@ const KIND_LOOKBACK_MS: Record<SummaryKind, number> = {
 }
 
 async function pickModel(projectModelOverride: string | null): Promise<{ model: string; apiKeyOverride?: string } | null> {
-  if (projectModelOverride) {
-    return { model: projectModelOverride }
-  }
-  try {
-    const intel = await resolveAgent('projectsIntelligence')
-    if (intel.model) return { model: intel.model, apiKeyOverride: intel.apiKeyOverride }
-  } catch { /* ignore */ }
+  if (projectModelOverride) return { model: projectModelOverride }
   try {
     const agent = await resolveAgent('wos')
     if (agent.model) return { model: agent.model, apiKeyOverride: agent.apiKeyOverride }
