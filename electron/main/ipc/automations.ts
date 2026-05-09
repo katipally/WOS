@@ -4,10 +4,132 @@ import { audit } from '../automations/audit'
 import { runAutomation } from '../automations/runner'
 import { automationsRuntime } from '../automations'
 import { ensureWebhook } from '../automations/webhooks'
+import { answerQuestion, listPending } from '../automations/questions'
 import { refreshTrayMenu } from '../tray'
 import { listConnections, listAvailableApps } from '../apps/manager'
+import { getSnapshot } from '../context/snapshotManager'
 import { resolveAgent } from '../agent/settings'
 import { getProvider } from '../providers'
+
+// Placeholder keys that map to specific app snapshot scopes
+const PLACEHOLDER_TO_SNAPSHOT: Record<string, { appId: string; scope: string; labelField: string; idField: string }> = {
+  'CHANNEL': { appId: 'slack', scope: 'channels', labelField: 'name', idField: 'id' },
+  'CHANNEL_NAME': { appId: 'slack', scope: 'channels', labelField: 'name', idField: 'id' },
+  'SLACK_CHANNEL': { appId: 'slack', scope: 'channels', labelField: 'name', idField: 'id' },
+  'REPO': { appId: 'github', scope: 'repos', labelField: 'full_name', idField: 'name' },
+  'REPO_NAME': { appId: 'github', scope: 'repos', labelField: 'full_name', idField: 'name' },
+  'GITHUB_REPO': { appId: 'github', scope: 'repos', labelField: 'full_name', idField: 'name' },
+  'PROJECT': { appId: 'jira', scope: 'projects', labelField: 'name', idField: 'key' },
+  'PROJECT_KEY': { appId: 'jira', scope: 'projects', labelField: 'name', idField: 'key' },
+  'CALENDAR': { appId: 'google', scope: 'calendars', labelField: 'summary', idField: 'id' },
+  'CALENDAR_NAME': { appId: 'google', scope: 'calendars', labelField: 'summary', idField: 'id' },
+}
+
+interface ClarificationQuestion {
+  key: string
+  question: string
+  kind: 'choice' | 'text'
+  choices?: Array<{ id: string; label: string; description?: string; value: string }>
+  placeholder: string
+  allowFreeform: boolean
+}
+
+interface MissingApp { appId: string; name: string }
+
+// Detect [PLACEHOLDER] markers in a prompt string
+function extractPlaceholders(prompt: string): string[] {
+  const matches = prompt.matchAll(/\[([A-Z][A-Z0-9_]*)\]/g)
+  return [...new Set([...matches].map(m => m[1]))]
+}
+
+// Build clarification questions from detected placeholders + snapshot data
+async function buildClarifications(
+  prompt: string,
+  connectedIds: Set<string>,
+  appById: Map<string, { id: string; name: string }>,
+): Promise<{ clarifications: ClarificationQuestion[]; missingApps: MissingApp[] }> {
+  const placeholders = extractPlaceholders(prompt)
+  const clarifications: ClarificationQuestion[] = []
+  const missingAppsMap = new Map<string, MissingApp>()
+
+  for (const key of placeholders) {
+    const mapping = PLACEHOLDER_TO_SNAPSHOT[key]
+
+    if (!mapping) {
+      // Unknown placeholder type — render as free-form text input
+      clarifications.push({
+        key,
+        question: `What should "${key.replace(/_/g, ' ').toLowerCase()}" be?`,
+        kind: 'text',
+        placeholder: `[${key}]`,
+        allowFreeform: true,
+      })
+      continue
+    }
+
+    if (!connectedIds.has(mapping.appId)) {
+      // App not connected — add to missing, still allow text input
+      const appName = appById.get(mapping.appId)?.name ?? mapping.appId
+      missingAppsMap.set(mapping.appId, { appId: mapping.appId, name: appName })
+      clarifications.push({
+        key,
+        question: `Which ${mapping.scope.slice(0, -1)} should be used? (Connect ${appName} first for suggestions)`,
+        kind: 'text',
+        placeholder: `[${key}]`,
+        allowFreeform: true,
+      })
+      continue
+    }
+
+    // App connected — fetch snapshot data for choices
+    const snapshot = getSnapshot(mapping.appId, mapping.scope)
+    const data = snapshot?.data ?? []
+
+    const choices = data.slice(0, 20).map(item => {
+      const obj = item as Record<string, unknown>
+      const label = String(obj[mapping.labelField] ?? obj.name ?? obj.id ?? item)
+      const id = String(obj[mapping.idField] ?? obj.id ?? label)
+      const members = obj.num_members != null ? `${obj.num_members} members` : undefined
+      const description = members ?? (obj.description ? String(obj.description).slice(0, 60) : undefined)
+      return { id, label: label.startsWith('#') ? label : `#${label}`.replace(/^##/, '#'), description, value: label }
+    })
+
+    const humanScope = mapping.scope.slice(0, -1) // 'channels' → 'channel'
+    clarifications.push({
+      key,
+      question: `Which ${humanScope} should be used?`,
+      kind: choices.length > 0 ? 'choice' : 'text',
+      choices: choices.length > 0 ? choices : undefined,
+      placeholder: `[${key}]`,
+      allowFreeform: true,
+    })
+  }
+
+  return { clarifications, missingApps: [...missingAppsMap.values()] }
+}
+
+function patchPromptWithAnswer(automationId: string, question: string, answer: string): boolean {
+  const automation = registry.get(automationId)
+  if (!automation) return false
+
+  const matches = [...automation.prompt.matchAll(/\[([A-Z][A-Z0-9_]*)\]/g)]
+  if (matches.length === 0) return false
+
+  let target: string | null = null
+  for (const m of matches) {
+    const humanized = m[1].toLowerCase().replace(/_/g, ' ')
+    if (question.toLowerCase().includes(humanized) || question.includes(m[1])) {
+      target = m[1]
+      break
+    }
+  }
+  if (!target && matches.length === 1) target = matches[0][1]
+  if (!target) return false
+
+  const updatedPrompt = automation.prompt.replaceAll(`[${target}]`, answer)
+  registry.upsert({ ...automation, prompt: updatedPrompt })
+  return true
+}
 
 export function registerAutomationsHandlers(): void {
   ipcMain.handle('automations:list', (_evt, args?: { kind?: AutomationKind; enabled?: boolean }) => {
@@ -76,6 +198,87 @@ export function registerAutomationsHandlers(): void {
     return { ok: true }
   })
 
+  // Answer a paused automation question
+  ipcMain.handle('automations:answerQuestion', (_evt, args: { questionId: string; answer: string }) => {
+    const pendingSnapshot = listPending().find(q => q.questionId === args.questionId)
+    const ok = answerQuestion(args.questionId, args.answer)
+    let promptUpdated = false
+    if (ok && pendingSnapshot) {
+      promptUpdated = patchPromptWithAnswer(pendingSnapshot.automationId, pendingSnapshot.question, args.answer)
+    }
+    return { ok, promptUpdated }
+  })
+
+  // List all tools available to automations (for ToolsSelector UI)
+  ipcMain.handle('automations:listTools', async () => {
+    const { getAllTools } = await import('../tools')
+    const tools = getAllTools()
+    return tools.map(t => ({
+      name: t.name,
+      description: t.description,
+      tags: (t as { tags?: string[] }).tags ?? [],
+    }))
+  })
+
+  // AI diagnosis for a failed run
+  ipcMain.handle('automations:diagnoseRun', async (_evt, args: { runId: string }) => {
+    const run = audit.get(args.runId)
+    if (!run) return { ok: false, error: 'Run not found' }
+
+    let model = ''
+    let apiKeyOverride: string | undefined
+    try {
+      const spec = await resolveAgent('automation')
+      if (spec.model) { model = spec.model; apiKeyOverride = spec.apiKeyOverride }
+    } catch { /* fall through */ }
+    if (!model) {
+      try {
+        const spec = await resolveAgent('wos')
+        model = spec.model ?? ''
+        apiKeyOverride = spec.apiKeyOverride
+      } catch { /* no model */ }
+    }
+    if (!model) return { ok: false, error: 'No model configured for diagnosis.' }
+
+    const trigger = run.trigger as Record<string, unknown> | null
+    const prompt = trigger?._prompt as string | undefined
+
+    const systemPrompt = [
+      'You are a diagnostic assistant for AI automation failures.',
+      'Given an error message and tool call history, explain what went wrong in 2-3 sentences',
+      'and give 1-2 concrete fix suggestions.',
+      'Return ONLY valid JSON (no markdown fences):',
+      '{ "explanation": "...", "suggestions": ["...", "..."], "actionType": "reconnect_app" | "edit_prompt" | "configure_model" | "other" }',
+    ].join('\n')
+
+    const diagnosisPrompt = [
+      run.error ? `Error: ${run.error}` : '',
+      `Tool calls: ${JSON.stringify(run.toolCalls ?? []).slice(0, 500)}`,
+      prompt ? `Automation prompt: ${prompt.slice(0, 300)}` : '',
+    ].filter(Boolean).join('\n')
+
+    try {
+      const provider = getProvider(model)
+      let raw = ''
+      for await (const event of provider.stream({
+        model,
+        systemPrompt,
+        messages: [{ role: 'user', content: diagnosisPrompt }],
+        tools: [],
+        maxTokens: 400,
+        apiKeyOverride,
+      })) {
+        if (event.type === 'text_delta') raw += event.content
+      }
+      const cleaned = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
+      const result = JSON.parse(cleaned) as { explanation: string; suggestions: string[]; actionType: string }
+      return { ok: true, ...result }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
+  })
+
+  // Enhanced parseDescription: returns spec + clarification questions + missing apps
   ipcMain.handle('automations:parseDescription', async (_evt, args: { description: string }) => {
     const { description } = args
 
@@ -83,20 +286,15 @@ export function registerAutomationsHandlers(): void {
     const allApps = listAvailableApps()
     const appById = new Map(allApps.map(a => [a.id, a]))
     const conns = listConnections()
-    const connectedAppNames = conns
-      .filter(c => c.enabled)
-      .map(c => appById.get(c.appId)?.name ?? c.appId)
+    const connectedAppNames = conns.filter(c => c.enabled).map(c => appById.get(c.appId)?.name ?? c.appId)
     const allConnectedIds = new Set(conns.filter(c => c.enabled).map(c => c.appId))
 
-    // Resolve model + API key (per-persona override → wos → defaultModel)
+    // Resolve model + API key
     let model = ''
     let apiKeyOverride: string | undefined
     try {
       const spec = await resolveAgent('automation')
-      if (spec.model) {
-        model = spec.model
-        apiKeyOverride = spec.apiKeyOverride
-      }
+      if (spec.model) { model = spec.model; apiKeyOverride = spec.apiKeyOverride }
     } catch { /* fall through */ }
     if (!model) {
       try {
@@ -124,7 +322,7 @@ export function registerAutomationsHandlers(): void {
       '  "schedule": { "mode": "at"|"every"|"cron", "at"?: "...", "every"?: "...", "cron"?: "...", "tz"?: "..." },',
       '  "hook": { "event": "meeting:saved" | "session:new" | "app:connected" | "app:disconnected" },',
       '  "webhook": {},',
-      '  "delivery": { "kind": "silent" | "notify" | "chat" },',
+      '  "delivery": { "kind": "chat" | "notify" | "silent" },',
       '  "requiredApps": ["slack", "github"]',
       '}',
       '',
@@ -135,15 +333,19 @@ export function registerAutomationsHandlers(): void {
       'WRONG (these always fail):',
       '  "summarize the specified Slack channel"  ← "specified" is undefined at runtime',
       '  "review messages from the target channel"  ← "target" is undefined',
-      '  "create a summary automation for the channel"  ← meta-instruction, not a task',
       '',
       'RIGHT (use actual names from the user description):',
-      '  "Read the last 24 hours of messages from #all-agent-testing on Slack. Summarize the key discussions, decisions, blockers, and action items. Post the summary back to #all-agent-testing."',
-      '  "Check my Google Calendar for meetings tomorrow. List each meeting with attendees and duration."',
+      '  "Read the last 24 hours of messages from #all-agent-testing on Slack. Summarize the key discussions..."',
       '',
       'If the user specified a channel/repo/resource, use it verbatim in the prompt.',
-      'If the user did NOT specify a resource and you cannot infer it, use a clear placeholder like [CHANNEL_NAME] — do NOT guess.',
+      'If the user did NOT specify a resource, use EXACTLY one of these placeholder formats:',
+      '  [CHANNEL_NAME]  — for Slack channels',
+      '  [REPO_NAME]     — for GitHub repositories',
+      '  [PROJECT_KEY]   — for Jira projects',
+      '  [CALENDAR_NAME] — for Google Calendar calendars',
+      'Use ONLY these exact placeholder formats — never invent others.',
       '',
+      'Default delivery to "chat" unless the user explicitly says "silent" or "notify".',
       'Include only the relevant trigger field (schedule, hook, or webhook).',
       'For time like "9am daily", use cron mode with expr "0 9 * * *".',
       'For "remind me in X", use mode "at".',
@@ -165,7 +367,6 @@ export function registerAutomationsHandlers(): void {
         if (event.type === 'text_delta') raw += event.content
       }
 
-      // Strip markdown fences if model wraps response
       const cleaned = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
       const spec = JSON.parse(cleaned) as {
         name: string
@@ -179,15 +380,23 @@ export function registerAutomationsHandlers(): void {
         requiredApps?: string[]
       }
 
-      // Find which required apps aren't connected
-      const missingApps = (spec.requiredApps ?? [])
-        .filter(appId => !allConnectedIds.has(appId))
-        .map(appId => ({
-          appId,
-          name: appById.get(appId)?.name ?? appId,
-        }))
+      // Build clarification questions from any [PLACEHOLDER] markers in the prompt
+      const { clarifications, missingApps: clarificationMissing } = await buildClarifications(
+        spec.prompt,
+        allConnectedIds,
+        appById,
+      )
 
-      return { ok: true, spec, missingApps }
+      // Also find which required apps aren't connected (from requiredApps field)
+      const requiredMissing = (spec.requiredApps ?? [])
+        .filter(appId => !allConnectedIds.has(appId))
+        .map(appId => ({ appId, name: appById.get(appId)?.name ?? appId }))
+
+      // Merge missing apps (deduplicate by appId)
+      const allMissing = new Map<string, MissingApp>()
+      for (const m of [...clarificationMissing, ...requiredMissing]) allMissing.set(m.appId, m)
+
+      return { ok: true, spec, clarifications, missingApps: [...allMissing.values()] }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
     }

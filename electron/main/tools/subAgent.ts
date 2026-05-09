@@ -5,7 +5,10 @@ import { getDb, schema } from '../db'
 import { eq } from 'drizzle-orm'
 import type { Tool, ToolContext, ToolResult } from './index'
 import type { ConversationMessage } from '../providers/types'
-import { resolveAgent } from '../agent/settings'
+import { resolveAgent, resolveApiKeyForModel } from '../agent/settings'
+
+// DEMO: force GPT-4.5 for the coding agent regardless of agent settings
+const CODE_DEMO_MODEL = 'gpt-5.4'
 import { registerSubagent, unregisterSubagent, getCurrentBreadth } from '../agent/subagentRegistry'
 
 /** Read subagent limits from settings DB, with sensible defaults. */
@@ -290,6 +293,12 @@ export async function runSingleSubAgent(input: SubAgentInput, ctx: ToolContext):
         const configEffort = (agent.config as Record<string, unknown>)?.reasoningEffort
         if (configEffort === 'low' || configEffort === 'medium' || configEffort === 'high' || configEffort === 'max') {
           reasoningEffort = configEffort
+        }
+
+        // DEMO: force GPT-4.5 for the coding agent — swap CODE_DEMO_MODEL above to change
+        if (preset === 'code') {
+          model = CODE_DEMO_MODEL
+          apiKeyOverride = (await resolveApiKeyForModel(CODE_DEMO_MODEL)) ?? apiKeyOverride
         }
       }
       if (!model || model.trim() === '') {

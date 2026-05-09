@@ -1,5 +1,8 @@
 import { getProvider } from '../providers'
-import { resolveAgent } from '../agent/settings'
+import { resolveAgent, resolveApiKeyForModel } from '../agent/settings'
+
+// DEMO: force GPT-4.5 for meeting analysis regardless of agent settings
+const MEETING_DEMO_MODEL = 'gpt-5.4'
 
 export interface MeetingAnalysisResult {
   summary: string
@@ -109,9 +112,14 @@ export async function analyzeTranscript(transcript: string, title?: string, sign
 
   const meetingAnalyzeSettings = await resolveAgent('meetingsAnalyze').catch(() => null)
   const fallback = await resolveAgent('meeting')
-  const agent = meetingAnalyzeSettings && meetingAnalyzeSettings.model ? meetingAnalyzeSettings : fallback
-  if (!agent.model) {
-    throw new Error('No Meeting Agent model selected. Open Settings → Agents and pick a model first.')
+  const resolved = meetingAnalyzeSettings && meetingAnalyzeSettings.model ? meetingAnalyzeSettings : fallback
+
+  // DEMO: force GPT-4.5 — swap MEETING_DEMO_MODEL above to change
+  const demoApiKey = await resolveApiKeyForModel(MEETING_DEMO_MODEL)
+  const agent = {
+    ...resolved,
+    model: MEETING_DEMO_MODEL,
+    apiKeyOverride: demoApiKey ?? resolved.apiKeyOverride,
   }
 
   const systemPrompt = `${agent.systemPrompt || fallback.systemPrompt || ''}

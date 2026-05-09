@@ -144,6 +144,7 @@ export async function refreshAccessToken(
   clientSecret: string,
   refreshToken: string,
 ): Promise<{ accessToken: string; expiresAt: number }> {
+  console.log('[google:oauth] refreshing access token...')
   const res = await fetch(TOKEN_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -156,9 +157,15 @@ export async function refreshAccessToken(
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
+    let parsed: { error?: string } = {}
+    try { parsed = JSON.parse(text) as { error?: string } } catch { /* ignore */ }
+    if (parsed.error === 'invalid_client' || parsed.error === 'unauthorized_client') {
+      throw new Error('Google OAuth credentials are invalid. Please reconnect Google in Settings → Apps → Google.')
+    }
     throw new Error(`Token refresh failed ${res.status}: ${text}`)
   }
   const data = await res.json() as { access_token: string; expires_in: number }
+  console.log('[google:oauth] token refreshed, expires in', data.expires_in, 's')
   return {
     accessToken: data.access_token,
     expiresAt: Date.now() + data.expires_in * 1000,

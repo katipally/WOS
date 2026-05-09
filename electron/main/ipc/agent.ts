@@ -262,13 +262,10 @@ export function registerAgentHandlers(_win: BrowserWindow) {
       const modeSetting = db.select().from(schema.settings).where(eq(schema.settings.key, 'defaultMode')).get()
       const defaultMode = (modeSetting?.value as string)?.replace(/^"|"$/g, '') ?? 'default'
 
-      let resolvedModel = model ?? ''
-      if (!resolvedModel) {
-        try {
-          const wos = await resolveAgent('wos')
-          resolvedModel = (wos.model as string | undefined) ?? ''
-        } catch { /* ignore — runner will surface "no model" later */ }
-      }
+      // Store only an explicitly passed model. If none is given, leave it empty
+      // so the runner resolves the current WOS agent model on first use rather
+      // than pinning whichever model happened to be active at creation time.
+      const resolvedModel = model ?? ''
 
       const id = randomUUID()
       const now = new Date()
@@ -287,7 +284,7 @@ export function registerAgentHandlers(_win: BrowserWindow) {
         id,
         title: 'New Conversation',
         workspaceId: workspaceId ?? null,
-        model: model ?? resolvedModel,
+        model: resolvedModel,
         mode: mode ?? defaultMode,
         createdAt: now,
         updatedAt: now,

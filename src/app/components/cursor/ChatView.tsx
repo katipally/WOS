@@ -921,6 +921,22 @@ export function getAgentColor(colorSeed?: number) {
   return AGENT_PALETTE[(colorSeed ?? 0) % AGENT_PALETTE.length]
 }
 
+const AGENT_DISPLAY: Record<string, { icon: string; label: string }> = {
+  code:       { icon: '⚡', label: 'Coding'     },
+  coding:     { icon: '⚡', label: 'Coding'     },
+  meeting:    { icon: '📅', label: 'Meeting'    },
+  projects:   { icon: '📊', label: 'Projects'   },
+  automation: { icon: '⚙️',  label: 'Automation' },
+  wos:        { icon: '◆',  label: 'WOS'        },
+}
+
+function getAgentDisplay(agentName?: string): { icon: string; label: string } {
+  if (!agentName) return { icon: '◆', label: 'Agent' }
+  const key = agentName.toLowerCase()
+  if (AGENT_DISPLAY[key]) return AGENT_DISPLAY[key]
+  return { icon: '◆', label: agentName.charAt(0).toUpperCase() + agentName.slice(1) }
+}
+
 /** Elapsed-time hook: updates every second while running. */
 function useElapsed(startedAt?: number, isRunning?: boolean) {
   const [elapsed, setElapsed] = useState(0)
@@ -1069,8 +1085,7 @@ function SubagentRunHeader({
   const color = getAgentColor(colorSeed)
   const isRunning = result === undefined && !interrupted
   const elapsed = useElapsed(startedAt, isRunning)
-  const shortId = agentId.slice(0, 6)
-  const displayName = agentName ?? 'task'
+  const { icon, label } = getAgentDisplay(agentName)
 
   let statusLabel = 'running'
   let statusColor: string = color.text
@@ -1085,8 +1100,8 @@ function SubagentRunHeader({
       aria-expanded={expanded}
     >
       <ChevronRight size={10} className={cn('shrink-0 transition-transform', expanded && 'rotate-90')} style={{ color: color.text }} />
-      <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-medium shrink-0" style={{ background: color.bg, border: `1px solid ${color.border}`, color: color.text }}>
-        🤖 {displayName}#{shortId}
+      <span className="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 flex items-center gap-1" style={{ background: color.bg, border: `1px solid ${color.border}`, color: color.text }}>
+        <span>{icon}</span><span>{label}</span>
       </span>
       <span
         className="text-[10px] truncate flex-1 text-left"
@@ -1626,7 +1641,10 @@ function AssistantMessage({ message, isStreaming }: { message: DisplayMessage; i
                   {...block}
                   expanded={expandedRuns[block.agentId] ?? false}
                   onToggle={() => setExpandedRuns(prev => ({ ...prev, [block.agentId]: !prev[block.agentId] }))}
-                  onFocus={() => setFocusedAgentId(block.agentId)}
+                  onFocus={() => {
+                    setFocusedAgentId(block.agentId)
+                    setExpandedRuns(prev => ({ ...prev, [block.agentId]: false }))
+                  }}
                 />
               </FadeIn>
             )
@@ -2537,7 +2555,6 @@ export function ChatView() {
         <SubagentFocusPanel
           block={focusedBlock}
           agentName={focusMeta.agentName}
-          shortId={focusMeta.shortId}
           color={focusColor}
           onClose={() => setFocusedAgentId(null)}
         />
@@ -2547,11 +2564,10 @@ export function ChatView() {
 }
 
 function SubagentFocusPanel({
-  block, agentName, shortId, color, onClose,
+  block, agentName, color, onClose,
 }: {
   block: Extract<MessageBlock, { type: 'subagent' }> | null
   agentName: string
-  shortId: string
   color: ReturnType<typeof getAgentColor>
   onClose: () => void
 }) {
@@ -2570,6 +2586,8 @@ function SubagentFocusPanel({
     else { statusLabel = 'running'; statusColor = color.text }
   }
 
+  const { icon, label } = getAgentDisplay(agentName)
+
   return (
     <aside
       className="flex flex-col h-full shrink-0"
@@ -2580,20 +2598,24 @@ function SubagentFocusPanel({
       }}
     >
       <div
-        className="flex items-center gap-2 px-3 py-2 shrink-0"
+        className="flex items-center gap-2 px-3 py-2.5 shrink-0"
         style={{ background: color.bg, borderBottom: `1px solid ${color.border}` }}
       >
-        <span style={{ color: color.text }}>🔍</span>
-        <span className="text-xs font-medium font-mono" style={{ color: color.text }}>
-          {agentName}#{shortId}
-        </span>
-        <span
-          className="text-[10px] shrink-0 font-medium px-1.5 py-0.5 rounded-full"
-          style={{ color: statusColor, background: 'rgba(0,0,0,0.2)' }}
-        >
+        <span className="text-base leading-none">{icon}</span>
+        <div className="flex flex-col flex-1 min-w-0">
+          <span className="text-xs font-semibold" style={{ color: color.text }}>
+            {label} Agent
+          </span>
+          {block?.prompt && (
+            <span className="text-[10px] truncate mt-0.5" style={{ color: 'var(--muted-foreground)' }}>
+              {block.prompt}
+            </span>
+          )}
+        </div>
+        <span className="text-[10px] shrink-0 flex items-center gap-1" style={{ color: statusColor }}>
+          <span className="text-[8px]">●</span>
           {statusLabel}
         </span>
-        <span className="flex-1" />
         <button
           onClick={onClose}
           className="text-[11px] px-2 py-0.5 rounded transition-colors wos-hover"

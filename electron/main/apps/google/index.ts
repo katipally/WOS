@@ -52,6 +52,7 @@ export const googleApp: AppModule = {
   async initiateOAuth(creds) {
     if (!creds.clientId) return { ok: false, error: 'Client ID is required.' }
     if (!creds.clientSecret) return { ok: false, error: 'Client Secret is required.' }
+    console.log('[google:oauth] initiating OAuth flow, clientId:', String(creds.clientId).slice(0, 20) + '...')
     try {
       const tokens = await runOAuthFlow(creds.clientId, creds.clientSecret)
       const fullCreds: Record<string, string> = {
@@ -63,12 +64,14 @@ export const googleApp: AppModule = {
         redirectUri: tokens.redirectUri,
       }
       const user = await getUserInfo(fullCreds as unknown as GoogleCreds)
+      console.log('[google:oauth] OAuth success, user:', user.email)
       return {
         ok: true,
         identity: { email: user.email, name: user.name },
         fullCreds,
       }
     } catch (err) {
+      console.error('[google:oauth] OAuth failed:', err instanceof Error ? err.message : err)
       return { ok: false, error: (err as Error).message }
     }
   },
@@ -77,11 +80,14 @@ export const googleApp: AppModule = {
     return buildGoogleTools(creds as unknown as GoogleCreds)
   },
   async snapshot(creds) {
+    console.log('[google] fetching calendar list...')
     try {
       const data = await listCalendarList(creds as unknown as GoogleCreds)
       const calendars = (data.items ?? []).map(c => ({ id: c.id, summary: c.summary, primary: c.primary ?? false }))
+      console.log('[google] calendar snapshot:', calendars.length, 'calendars')
       return { calendars }
-    } catch {
+    } catch (err) {
+      console.error('[google] calendar snapshot failed:', err instanceof Error ? err.message : err)
       return { calendars: [] }
     }
   },

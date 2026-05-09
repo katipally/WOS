@@ -41,6 +41,9 @@ export interface AskUserExtras {
    * If present, the UI can show a "refresh" affordance.
    */
   staleAt?: number
+  /** Automation context — set when ask_user comes from a running automation (not a chat agent). */
+  automationId?: string
+  runId?: string
 }
 
 export type AgentEvent =

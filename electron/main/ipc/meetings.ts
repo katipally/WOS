@@ -21,6 +21,8 @@ import {
 } from '../meetings/store'
 import type { MeetingProcessingStatus } from '../meetings/store'
 import { extractTranscript, parseSrt, parseVtt } from '../transcription'
+import { getDb, schema, notifyWrite } from '../db'
+import { getSettingJSON } from '../db/settings'
 
 /* ── helpers ── */
 
@@ -34,7 +36,10 @@ async function searchDriveFiles(creds: GoogleCreds, query: string) {
   const token = await getFreshToken(creds)
   const q = encodeURIComponent(query)
   const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType,size,modifiedTime,webViewLink)&pageSize=100&orderBy=modifiedTime+desc`
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(20_000),
+  })
   if (!res.ok) throw new Error(`Drive search failed: ${res.status}`)
   const data = await res.json() as { files: Array<{ id: string; name: string; mimeType: string; size?: string; modifiedTime?: string; webViewLink?: string }> }
   return data.files ?? []
@@ -127,8 +132,12 @@ async function listSlackDestinations(token: string) {
 
 export function registerMeetingsHandlers() {
   ipcMain.handle('meetings:calendar:list', async () => {
+    console.log('[meetings] calendar:list')
     const g = await getGoogleCreds()
-    if ('error' in g) return { events: [], error: null, connected: false }
+    if ('error' in g) {
+      console.log('[meetings] calendar:list: Google not connected')
+      return { events: [], error: null, connected: false }
+    }
 
     const now = new Date()
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
@@ -136,9 +145,12 @@ export function registerMeetingsHandlers() {
 
     try {
       const data = await googleApi.listCalendarEvents(g.creds, todayStart.toISOString(), tomorrowStart.toISOString(), 100)
+      console.log('[meetings] calendar:list:', (data.items ?? []).length, 'events')
       return { events: data.items ?? [], error: null, connected: true }
     } catch (err) {
-      return { events: [], error: String(err), connected: true }
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[meetings] calendar:list error:', msg)
+      return { events: [], error: msg, connected: true }
     }
   })
 
@@ -163,6 +175,7 @@ export function registerMeetingsHandlers() {
   })
 
   ipcMain.handle('meetings:drive:find-folder', async () => {
+    console.log('[meetings] drive:find-folder')
     const g = await getGoogleCreds()
     if ('error' in g) return { folderId: null, error: g.error }
 
@@ -172,13 +185,17 @@ export function registerMeetingsHandlers() {
         "name='Meet Recordings' and mimeType='application/vnd.google-apps.folder' and trashed=false"
       )
       const folder = files[0]
+      console.log('[meetings] drive:find-folder:', folder?.id ?? 'not found')
       return { folderId: folder?.id ?? null, error: null }
     } catch (err) {
-      return { folderId: null, error: String(err) }
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[meetings] drive:find-folder error:', msg)
+      return { folderId: null, error: msg }
     }
   })
 
   ipcMain.handle('meetings:drive:list-recordings', async (_e, { folderId }: { folderId: string }) => {
+    console.log('[meetings] drive:list-recordings folderId:', folderId)
     const g = await getGoogleCreds()
     if ('error' in g) return { recordings: [], error: g.error }
 
@@ -201,13 +218,17 @@ export function registerMeetingsHandlers() {
           transcriptName: transcript?.name,
         }
       })
+      console.log('[meetings] drive:list-recordings:', recordings.length, 'recordings')
       return { recordings, error: null }
     } catch (err) {
-      return { recordings: [], error: String(err) }
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[meetings] drive:list-recordings error:', msg)
+      return { recordings: [], error: msg }
     }
   })
 
   ipcMain.handle('meetings:drive:get-transcript', async (_e, { fileId, fileName }: { fileId: string; fileName: string }) => {
+    console.log('[meetings] drive:get-transcript fileName:', fileName)
     const g = await getGoogleCreds()
     if ('error' in g) return { transcript: null, error: g.error }
 
@@ -215,13 +236,17 @@ export function registerMeetingsHandlers() {
       const raw = await downloadDriveText(g.creds, fileId)
       const ext = path.extname(fileName).toLowerCase()
       const transcript = ext === '.vtt' ? parseVtt(raw) : ext === '.srt' ? parseSrt(raw) : raw
+      console.log('[meetings] drive:get-transcript done, length:', transcript.length)
       return { transcript, error: null }
     } catch (err) {
-      return { transcript: null, error: String(err) }
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[meetings] drive:get-transcript error:', msg)
+      return { transcript: null, error: msg }
     }
   })
 
   ipcMain.handle('meetings:drive:transcribe-video', async (_e, { fileId, fileName }: { fileId: string; fileName: string }) => {
+    console.log('[meetings] drive:transcribe-video fileName:', fileName)
     const g = await getGoogleCreds()
     if ('error' in g) return { transcript: null, error: g.error }
 
@@ -229,9 +254,11 @@ export function registerMeetingsHandlers() {
     try {
       tempPath = await downloadDriveToTemp(g.creds, fileId, fileName)
       const { text } = await extractTranscript(tempPath)
+      console.log('[meetings] drive:transcribe-video done, transcript length:', text.length)
       return { transcript: text, error: null }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
+      console.error('[meetings] drive:transcribe-video error:', message)
       return { transcript: null, error: message }
     } finally {
       if (tempPath) fs.rmSync(tempPath, { force: true })
@@ -239,16 +266,20 @@ export function registerMeetingsHandlers() {
   })
 
   ipcMain.handle('meetings:process-file', async (_e, { filePath, fileName: _fileName, mimeType }: { filePath: string; fileName: string; mimeType: string }) => {
+    console.log('[meetings] process-file:', _fileName, 'mimeType:', mimeType)
     try {
       const { text, format } = await extractTranscript(filePath, mimeType)
       if (!text.trim()) return { transcript: null, error: 'No speech or text was detected in this file.', format }
+      console.log('[meetings] process-file done, format:', format, 'length:', text.length)
       return { transcript: text, error: null, format }
     } catch (err) {
       const name = err instanceof Error ? err.name : ''
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[meetings] process-file error:', msg)
       if (name === 'TranscriptionUnavailableError') {
-        return { transcript: null, error: (err as Error).message }
+        return { transcript: null, error: msg }
       }
-      return { transcript: null, error: err instanceof Error ? err.message : String(err) }
+      return { transcript: null, error: msg }
     }
   })
 
@@ -295,6 +326,7 @@ export function registerMeetingsHandlers() {
   })
 
   ipcMain.handle('meetings:analyze', async (_e, { id, transcript, title, source, sourceUri }: { id?: string; transcript: string; title?: string; source?: 'upload' | 'drive' | 'live'; sourceUri?: string | null }) => {
+    console.log('[meetings] analyze, title:', title ?? '(untitled)', 'transcript length:', transcript.length)
     try {
       if (id) updateMeetingStatus(id, 'analyzing', 'Analyzing with Meeting Agent', 80, null)
       const result = await analyzeTranscript(transcript, title)
@@ -310,15 +342,17 @@ export function registerMeetingsHandlers() {
         processingProgress: 100,
         lastError: null,
       })
+      console.log('[meetings] analyze done, meeting id:', savedId)
       addMeetingActivity({ meetingId: savedId, type: 'analysis', status: 'success', label: `Analyzed ${title ?? 'Uploaded Meeting'}` })
       return { id: savedId, result, error: null }
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[meetings] analyze error:', msg)
       if (id) {
-        const msg = err instanceof Error ? err.message : String(err)
         updateMeetingStatus(id, 'error', 'Needs retry', 100, msg)
         addMeetingActivity({ meetingId: id, type: 'analysis', status: 'error', label: `Analysis failed: ${msg}` })
       }
-      return { result: null, error: err instanceof Error ? err.message : String(err) }
+      return { result: null, error: msg }
     }
   })
 
@@ -356,6 +390,7 @@ export function registerMeetingsHandlers() {
   })
 
   ipcMain.handle('meetings:email-notes', async (_e, { to, cc, subject, body, title, result, meetingId }: { to: string; cc?: string; subject?: string; body?: string; title?: string; result?: Record<string, unknown>; meetingId?: string | null }) => {
+    console.log('[meetings] email-notes to:', to)
     const g = await getGoogleCreds()
     if ('error' in g) return { ok: false, error: g.error }
     try {
@@ -364,8 +399,10 @@ export function registerMeetingsHandlers() {
       addMeetingActivity({ meetingId, type: 'gmail', status: 'success', label: `Sent email to ${to}`, detail: { id: (sent as { id?: string }).id, subject } })
       return { ok: true, id: (sent as { id?: string }).id }
     } catch (err) {
-      addMeetingActivity({ meetingId, type: 'gmail', status: 'error', label: `Email failed: ${err instanceof Error ? err.message : String(err)}` })
-      return { ok: false, error: String(err) }
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[meetings] email-notes error:', msg)
+      addMeetingActivity({ meetingId, type: 'gmail', status: 'error', label: `Email failed: ${msg}` })
+      return { ok: false, error: msg }
     }
   })
 
@@ -393,6 +430,7 @@ export function registerMeetingsHandlers() {
   })
 
   ipcMain.handle('meetings:slack-post', async (_e, { channel, text, title, result, meetingId }: { channel: string; text?: string; title?: string; result?: Record<string, unknown>; meetingId?: string | null }) => {
+    console.log('[meetings] slack-post to channel:', channel)
     const token = getSlackToken()
     if (!token) return { ok: false, error: 'Slack is not connected or has no bot/user token configured.' }
     try {
@@ -404,8 +442,10 @@ export function registerMeetingsHandlers() {
       addMeetingActivity({ meetingId, type: 'slack', status: 'success', label: `Sent to Slack ${res.channel}`, detail: { channel: res.channel, ts: res.ts } })
       return { ok: true, ts: res.ts, channel: res.channel }
     } catch (err) {
-      addMeetingActivity({ meetingId, type: 'slack', status: 'error', label: `Slack failed: ${err instanceof Error ? err.message : String(err)}` })
-      return { ok: false, error: String(err) }
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[meetings] slack-post error:', msg)
+      addMeetingActivity({ meetingId, type: 'slack', status: 'error', label: `Slack failed: ${msg}` })
+      return { ok: false, error: msg }
     }
   })
 
@@ -422,5 +462,124 @@ export function registerMeetingsHandlers() {
   ipcMain.handle('meetings:open-external', async (_e, { url }: { url: string }) => {
     await shell.openExternal(url)
     return { ok: true }
+  })
+
+  /* ── Drive folder picker ── */
+
+  ipcMain.handle('meetings:drive:list-folders', async () => {
+    const g = await getGoogleCreds()
+    if ('error' in g) return { folders: [], error: g.error }
+    try {
+      const files = await searchDriveFiles(g.creds, "mimeType='application/vnd.google-apps.folder' and trashed=false")
+      return {
+        folders: files.map(f => ({ id: f.id, name: f.name, modifiedTime: f.modifiedTime })),
+        error: null,
+      }
+    } catch (err) {
+      return { folders: [], error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('meetings:drive:list-all-files', async (_e, { folderId }: { folderId: string }) => {
+    const g = await getGoogleCreds()
+    if ('error' in g) return { files: [], error: g.error }
+    try {
+      const mimeFilter = [
+        "mimeType='video/mp4'", "mimeType='video/quicktime'", "mimeType='video/webm'",
+        "mimeType='audio/mpeg'", "mimeType='audio/mp4'", "mimeType='audio/wav'", "mimeType='audio/aiff'",
+        "mimeType='text/vtt'", "mimeType='text/plain'",
+        "mimeType='application/pdf'",
+        "mimeType='application/vnd.openxmlformats-officedocument.wordprocessingml.document'",
+        "name contains '.srt'", "name contains '.vtt'",
+      ].join(' or ')
+      const all = await searchDriveFiles(g.creds, `'${folderId}' in parents and (${mimeFilter}) and trashed=false`)
+
+      const textFiles = all.filter(f =>
+        f.mimeType === 'text/vtt' || f.mimeType === 'text/plain' ||
+        f.name.toLowerCase().includes('.srt') || f.name.toLowerCase().includes('.vtt')
+      )
+      const otherFiles = all.filter(f => !textFiles.includes(f))
+
+      const files = otherFiles.map(f => {
+        const baseName = f.name.replace(/\.[^.]+$/, '')
+        const match = textFiles.find(t => t.name.startsWith(baseName) || t.name.includes(baseName.slice(0, 20)))
+        const mt = f.mimeType ?? ''
+        const nm = f.name.toLowerCase()
+        const fileCategory: string =
+          (mt.startsWith('video/') || ['.mp4', '.mov', '.webm', '.mkv', '.avi'].some(e => nm.endsWith(e))) ? 'video' :
+          (mt.startsWith('audio/') || ['.mp3', '.wav', '.m4a', '.aiff', '.ogg'].some(e => nm.endsWith(e))) ? 'audio' :
+          (mt === 'application/pdf' || mt.includes('wordprocessingml')) ? 'document' : 'transcript'
+        return {
+          id: f.id, name: f.name, displayName: baseName,
+          date: f.modifiedTime ?? '', mimeType: mt, size: f.size ? parseInt(f.size, 10) : 0,
+          webViewLink: f.webViewLink, fileCategory,
+          hasTranscript: !!match, transcriptFileId: match?.id, transcriptName: match?.name,
+        }
+      })
+
+      for (const t of textFiles) {
+        const baseName = t.name.replace(/\.[^.]+$/, '')
+        files.push({
+          id: t.id, name: t.name, displayName: baseName,
+          date: t.modifiedTime ?? '', mimeType: t.mimeType ?? '', size: t.size ? parseInt(t.size, 10) : 0,
+          webViewLink: t.webViewLink, fileCategory: 'transcript',
+          hasTranscript: false, transcriptFileId: undefined, transcriptName: undefined,
+        })
+      }
+      return { files, error: null }
+    } catch (err) {
+      return { files: [], error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('meetings:drive:get-config', () => {
+    return {
+      folderId: getSettingJSON<string | null>('meetings.driveFolderId', null),
+      folderName: getSettingJSON<string | null>('meetings.driveFolderName', null),
+    }
+  })
+
+  ipcMain.handle('meetings:drive:set-config', (_e, { folderId, folderName }: { folderId: string | null; folderName: string | null }) => {
+    try {
+      const db = getDb()
+      const now = new Date()
+      for (const [key, val] of [['meetings.driveFolderId', folderId], ['meetings.driveFolderName', folderName]] as [string, string | null][]) {
+        db.insert(schema.settings).values({ key, value: JSON.stringify(val), updatedAt: now })
+          .onConflictDoUpdate({ target: schema.settings.key, set: { value: JSON.stringify(val), updatedAt: now } })
+          .run()
+      }
+      notifyWrite()
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('meetings:drive:process-file', async (_e, { fileId, fileName, mimeType }: { fileId: string; fileName: string; mimeType: string }) => {
+    console.log('[meetings] drive:process-file fileName:', fileName, 'mimeType:', mimeType)
+    const g = await getGoogleCreds()
+    if ('error' in g) return { transcript: null, error: g.error }
+    try {
+      const ext = path.extname(fileName).toLowerCase()
+      if (['.vtt', '.srt', '.txt', '.md'].includes(ext) || mimeType === 'text/vtt' || mimeType === 'text/plain') {
+        const raw = await downloadDriveText(g.creds, fileId)
+        const transcript = ext === '.vtt' ? parseVtt(raw) : ext === '.srt' ? parseSrt(raw) : raw
+        console.log('[meetings] drive:process-file (text) done, length:', transcript.length)
+        return { transcript, error: null }
+      }
+      let tempPath: string | null = null
+      try {
+        tempPath = await downloadDriveToTemp(g.creds, fileId, fileName)
+        const { text } = await extractTranscript(tempPath, mimeType)
+        console.log('[meetings] drive:process-file (binary) done, length:', text.length)
+        return { transcript: text || null, error: text ? null : 'No text detected in file' }
+      } finally {
+        if (tempPath) fs.rmSync(tempPath, { force: true })
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[meetings] drive:process-file error:', msg)
+      return { transcript: null, error: msg }
+    }
   })
 }

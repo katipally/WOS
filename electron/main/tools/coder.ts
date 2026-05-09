@@ -67,7 +67,7 @@ export const delegateToCoderTool: Tool = {
     const prompt = buildCoderPrompt(i)
     return runSingleSubAgent(
       {
-        description: `coding: ${i.task.slice(0, 60)}`,
+        description: i.task.slice(0, 80),
         prompt,
         preset: 'code',
         fork: false,

@@ -55,6 +55,26 @@ export const audit = {
     notifyWrite()
   },
 
+  get(runId: string): AuditRunRow | undefined {
+    const db = getDb()
+    const row = db.select().from(schema.automationRuns)
+      .where(eq(schema.automationRuns.id, runId))
+      .get() as typeof schema.automationRuns.$inferSelect | undefined
+    if (!row) return undefined
+    return {
+      id: row.id,
+      automationId: row.automationId,
+      startedAt: row.startedAt,
+      endedAt: row.endedAt ?? null,
+      status: row.status as RunStatus,
+      trigger: typeof row.trigger === 'string' ? safeParse(row.trigger as string) : row.trigger,
+      toolCalls: typeof row.toolCalls === 'string' ? safeParse(row.toolCalls as string) : row.toolCalls,
+      output: row.output ?? null,
+      error: row.error ?? null,
+      scratchDir: row.scratchDir ?? null,
+    }
+  },
+
   list(automationId?: string, limit = 100): AuditRunRow[] {
     const db = getDb()
     let q = db.select().from(schema.automationRuns).$dynamic()

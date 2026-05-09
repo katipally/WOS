@@ -218,10 +218,13 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     const targetConvId = activeConversationId
     set({ sendToken })
 
-    const { currentModel, currentMode } = get()
+    const { currentMode } = get()
     try {
+      // Only sync mode — model is managed by the runner (resolves from agent
+      // settings when unavailable) and by setModel() when user explicitly picks one.
+      // Writing currentModel here would re-freeze stale model IDs and prevent
+      // Settings → AI & Agents changes from taking effect on existing conversations.
       await window.wos.updateConversation(targetConvId, {
-        model: currentModel,
         mode: currentMode,
       })
     } catch (err) {
@@ -355,6 +358,11 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     } finally {
       // Refresh sidebar list (titles, updatedAt) — cheap, no currentMessages clobber
       void get().loadConversations()
+      // Reload this conversation so currentModel reflects any model the runner
+      // resolved (e.g. after switching WOS agent model in Settings).
+      if (get().activeConversationId === targetConvId) {
+        void get().loadConversation(targetConvId)
+      }
     }
   },
 
@@ -366,12 +374,9 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     const targetConvId = activeConversationId
     set({ sendToken })
 
-    const { currentModel, currentMode } = get()
+    const { currentMode } = get()
     try {
-      await window.wos.updateConversation(targetConvId, {
-        model: currentModel,
-        mode: currentMode,
-      })
+      await window.wos.updateConversation(targetConvId, { mode: currentMode })
     } catch (err) {
       console.error('[wos:store] failed to sync conversation settings', err)
       toast.error('Failed to update conversation settings')
@@ -465,6 +470,9 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       })
     } finally {
       void get().loadConversations()
+      if (get().activeConversationId === targetConvId) {
+        void get().loadConversation(targetConvId)
+      }
     }
   },
 

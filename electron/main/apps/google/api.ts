@@ -17,10 +17,17 @@ export async function getFreshToken(creds: GoogleCreds): Promise<string> {
   if (Date.now() < expiresAt - 5 * 60 * 1000) {
     return creds.accessToken
   }
-  const refreshed = await refreshAccessToken(creds.clientId, creds.clientSecret, creds.refreshToken)
-  const updatedCreds: GoogleCreds = { ...creds, accessToken: refreshed.accessToken, expiresAt: String(refreshed.expiresAt) }
-  persistUpdatedTokens(updatedCreds)
-  return refreshed.accessToken
+  console.log('[google:api] access token expired, refreshing...')
+  try {
+    const refreshed = await refreshAccessToken(creds.clientId, creds.clientSecret, creds.refreshToken)
+    console.log('[google:api] token refreshed, new expiry:', new Date(refreshed.expiresAt).toISOString())
+    const updatedCreds: GoogleCreds = { ...creds, accessToken: refreshed.accessToken, expiresAt: String(refreshed.expiresAt) }
+    persistUpdatedTokens(updatedCreds)
+    return refreshed.accessToken
+  } catch (err) {
+    console.error('[google:api] token refresh failed:', err instanceof Error ? err.message : err)
+    throw err
+  }
 }
 
 function persistUpdatedTokens(creds: GoogleCreds): void {

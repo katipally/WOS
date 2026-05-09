@@ -14,6 +14,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import matter from 'gray-matter'
+import { agentSkillsDir, ensureDir } from '../paths'
 
 export interface AgentPackManifest {
   id: string
@@ -35,7 +36,7 @@ export interface AgentPack {
   manifestPath: string
 }
 
-const PACK_IDS = ['wos', 'meeting', 'projects', 'automation'] as const
+const PACK_IDS = ['wos', 'meeting', 'projects', 'automation', 'code'] as const
 export type PackId = (typeof PACK_IDS)[number]
 
 function packsRoot(): string {
@@ -75,12 +76,34 @@ function loadPack(id: string): AgentPack | null {
 
 let CACHE: Map<string, AgentPack> | null = null
 
+/** Copy bundled SKILL.md files from app's agents/<id>/skills/ to
+ *  ~/.wos/agents/<id>/skills/. Skips files that already exist so
+ *  user edits are never overwritten. */
+function seedPackSkills(id: string, packDir: string): void {
+  const src = path.join(packDir, 'skills')
+  if (!fs.existsSync(src)) return
+  const dst = agentSkillsDir(id)
+  ensureDir(dst)
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const srcFile = path.join(src, entry.name, 'SKILL.md')
+    const dstFile = path.join(dst, entry.name, 'SKILL.md')
+    if (!fs.existsSync(srcFile) || fs.existsSync(dstFile)) continue
+    fs.mkdirSync(path.dirname(dstFile), { recursive: true })
+    fs.copyFileSync(srcFile, dstFile)
+  }
+}
+
 function loadAll(): Map<string, AgentPack> {
   if (CACHE) return CACHE
   const map = new Map<string, AgentPack>()
   for (const id of PACK_IDS) {
+    const packDir = path.join(packsRoot(), id)
     const pack = loadPack(id)
-    if (pack) map.set(pack.id, pack)
+    if (pack) {
+      map.set(pack.id, pack)
+      seedPackSkills(id, packDir)
+    }
   }
   CACHE = map
   return map

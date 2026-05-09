@@ -8,6 +8,7 @@ import type { ConversationMessage, ContentBlock } from '../providers/types'
 import { eq, asc, and, desc } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
 import { resolveAgent, resolveApiKeyForModel } from './settings'
+import { listProviderInstances } from '../providers'
 import { getContextWindow } from '../../../src/lib/modelCapabilities'
 import { recallMemories, buildMemoryBlock, pruneOldMemories } from '../memory/memoryService'
 import { extractAndStoreFacts } from '../memory/factExtractor'
@@ -78,6 +79,28 @@ export class AgentRunner {
         }
       } catch { /* ignore — re-throw below */ }
     }
+    // If the stored model is no longer registered in any enabled provider (e.g. the
+    // user swapped RunPod endpoints), re-resolve from the WOS agent settings so that
+    // changes in Settings → AI & Agents take effect on all existing conversations.
+    if (conv.model) {
+      const registered = listProviderInstances().some(
+        inst => inst.enabled && inst.models.some(m => m.id === conv.model)
+      )
+      if (!registered) {
+        try {
+          const wos = await resolveAgent('wos')
+          if (wos.model && wos.model.trim()) {
+            conv.model = wos.model
+            db.update(schema.conversations)
+              .set({ model: wos.model, updatedAt: new Date() })
+              .where(eq(schema.conversations.id, conversationId))
+              .run()
+            notifyWrite()
+          }
+        } catch { /* fall through to error below if model is still empty/unavailable */ }
+      }
+    }
+
     if (!conv.model || conv.model.trim() === '') {
       throw new Error('No AI model selected. Please go to Settings and choose a model to get started.')
     }

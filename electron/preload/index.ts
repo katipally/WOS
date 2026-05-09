@@ -302,6 +302,21 @@ contextBridge.exposeInMainWorld('wos', {
       ipcRenderer.on('meet:analysis-error', handler)
       return () => ipcRenderer.removeListener('meet:analysis-error', handler)
     },
+
+    listDriveFolders: (): Promise<{ folders: unknown[]; error: string | null }> =>
+      ipcRenderer.invoke('meetings:drive:list-folders'),
+
+    listDriveFiles: (params: { folderId: string }): Promise<{ files: unknown[]; error: string | null }> =>
+      ipcRenderer.invoke('meetings:drive:list-all-files', params),
+
+    getDriveConfig: (): Promise<{ folderId: string | null; folderName: string | null }> =>
+      ipcRenderer.invoke('meetings:drive:get-config'),
+
+    setDriveConfig: (params: { folderId: string | null; folderName: string | null }): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('meetings:drive:set-config', params),
+
+    processDriveFile: (params: { fileId: string; fileName: string; mimeType: string }): Promise<{ transcript: string | null; error: string | null }> =>
+      ipcRenderer.invoke('meetings:drive:process-file', params),
   },
 
   // ----- Automations -----
@@ -335,6 +350,36 @@ contextBridge.exposeInMainWorld('wos', {
       const handler = (_: Electron.IpcRendererEvent, data: { automationId: string; runId?: string }) => callback(data)
       ipcRenderer.on('shortcut:open-automations', handler)
       return () => ipcRenderer.removeListener('shortcut:open-automations', handler)
+    },
+    listTools: () =>
+      safeInvoke('automations:listTools', [] as unknown[]),
+    answerQuestion: (questionId: string, answer: string) =>
+      ipcRenderer.invoke('automations:answerQuestion', { questionId, answer }),
+    diagnoseRun: (runId: string) =>
+      ipcRenderer.invoke('automations:diagnoseRun', { runId }),
+    onQuestion: (callback: (e: {
+      automationId: string
+      runId: string
+      questionId: string
+      question: string
+      extras?: unknown
+      choices?: string[]
+    }) => void) => {
+      const handler = (_: Electron.IpcRendererEvent, data: {
+        automationId: string
+        runId: string
+        questionId: string
+        question: string
+        extras?: unknown
+        choices?: string[]
+      }) => callback(data)
+      ipcRenderer.on('automations:question', handler)
+      return () => ipcRenderer.removeListener('automations:question', handler)
+    },
+    onRunEvent: (callback: (e: { runId: string; automationId: string; event: unknown }) => void) => {
+      const handler = (_: Electron.IpcRendererEvent, data: { runId: string; automationId: string; event: unknown }) => callback(data)
+      ipcRenderer.on('automations:runEvent', handler)
+      return () => ipcRenderer.removeListener('automations:runEvent', handler)
     },
   },
 

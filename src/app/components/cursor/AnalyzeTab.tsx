@@ -1,13 +1,13 @@
 import React, { DragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Activity, AlertCircle, ArrowLeft, CheckCircle, Clipboard, CloudDownload,
-  Edit3, File, FileText, FolderOpen, Hash, HelpCircle, Loader2, Mail, MessageSquare,
-  RefreshCw, Search, Send, Trash2, Upload, X, Zap,
+  Activity, AlertCircle, ArrowLeft, CheckCircle, ChevronRight, Clipboard, CloudDownload,
+  Edit3, File, FileCode, FileText, Folder, FolderOpen, Hash, HelpCircle, Loader2,
+  Mail, MessageSquare, Mic, RefreshCw, Search, Send, Trash2, Upload, Video, X, Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '../../../lib/utils'
 
-interface DriveRecording {
+interface DriveFile {
   id: string
   name: string
   displayName: string
@@ -15,9 +15,18 @@ interface DriveRecording {
   mimeType: string
   size: number
   webViewLink?: string
+  fileCategory: 'video' | 'audio' | 'transcript' | 'document'
   hasTranscript: boolean
   transcriptFileId?: string
   transcriptName?: string
+}
+
+type DriveRecording = DriveFile
+
+interface DriveFolder {
+  id: string
+  name: string
+  modifiedTime?: string
 }
 
 interface MeetingResult {
@@ -89,6 +98,14 @@ interface AnalyzeTabProps {
 }
 
 const ACCEPTED_TYPES = '.mp4,.mov,.webm,.mp3,.wav,.m4a,.ogg,.aiff,.vtt,.srt,.txt,.docx,.pdf'
+
+function formatTimeAgo(date: Date): string {
+  const s = Math.floor((Date.now() - date.getTime()) / 1000)
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
+  return `${Math.floor(s / 86400)}d ago`
+}
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
@@ -509,56 +526,358 @@ function UploadCard({
   )
 }
 
+function fileCategoryIcon(category: DriveFile['fileCategory']) {
+  if (category === 'video') return <Video className="h-4 w-4 shrink-0" style={{ color: 'var(--muted-foreground)' }} />
+  if (category === 'audio') return <Mic className="h-4 w-4 shrink-0" style={{ color: 'var(--muted-foreground)' }} />
+  if (category === 'document') return <FileText className="h-4 w-4 shrink-0" style={{ color: 'var(--muted-foreground)' }} />
+  return <FileCode className="h-4 w-4 shrink-0" style={{ color: 'var(--muted-foreground)' }} />
+}
+
+function DriveFolderPickerModal({
+  onClose,
+  onSelect,
+}: {
+  onClose: () => void
+  onSelect: (folder: DriveFolder) => void
+}) {
+  const [folders, setFolders] = useState<DriveFolder[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+
+  useEffect(() => {
+    let mounted = true
+    window.wos.meetings.listDriveFolders().then(res => {
+      if (!mounted) return
+      if (res.error) setError(res.error)
+      else setFolders(res.folders as DriveFolder[])
+      setLoading(false)
+    })
+    return () => { mounted = false }
+  }, [])
+
+  const filtered = folders.filter(f => f.name.toLowerCase().includes(query.toLowerCase()))
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.55)' }}>
+      <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
+        <div className="flex items-center justify-between gap-3 p-4" style={{ borderBottom: '1px solid var(--border)' }}>
+          <div>
+            <h3 className="text-sm font-semibold">Choose a Google Drive folder</h3>
+            <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>WOS will list all supported files from this folder.</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1" style={{ color: 'var(--muted-foreground)' }}><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div className="flex items-center gap-2 rounded-lg px-2" style={{ border: '1px solid var(--border)', background: 'var(--input)' }}>
+            <Search className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--muted-foreground)' }} />
+            <input
+              autoFocus
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="Search folders..."
+              className="min-w-0 flex-1 bg-transparent py-2 text-xs outline-none"
+              style={{ color: 'var(--foreground)' }}
+            />
+          </div>
+
+          <div className="overflow-y-auto space-y-1" style={{ maxHeight: '320px' }}>
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 py-6 text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading folders...
+              </div>
+            ) : error ? (
+              <div className="flex items-start gap-2 rounded-xl p-3 text-xs" style={{ border: '1px solid var(--border)', color: 'var(--muted-foreground)' }}>
+                <AlertCircle className="h-4 w-4 shrink-0" /> {error}
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="rounded-xl p-5 text-center" style={{ border: '1px dashed var(--border)' }}>
+                <FolderOpen className="mx-auto mb-2 h-5 w-5" style={{ color: 'var(--muted-foreground)' }} />
+                <p className="text-xs">{query ? 'No folders match your search.' : 'No folders found in Google Drive.'}</p>
+              </div>
+            ) : (
+              filtered.map(folder => (
+                <button
+                  key={folder.id}
+                  onClick={() => onSelect(folder)}
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm transition-colors hover:opacity-80"
+                  style={{ border: '1px solid var(--border)', background: 'var(--background)' }}
+                >
+                  <Folder className="h-4 w-4 shrink-0" style={{ color: 'var(--amber)' }} />
+                  <span className="min-w-0 truncate font-medium">{folder.name}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="flex justify-end p-4" style={{ borderTop: '1px solid var(--border)' }}>
+          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm" style={{ border: '1px solid var(--border)' }}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DriveFilePickerModal({
+  onClose,
+  onAnalyze,
+}: {
+  onClose: () => void
+  onAnalyze: (file: DriveFile) => void
+}) {
+  const [step, setStep] = useState<'folders' | 'files'>('folders')
+  const [folders, setFolders] = useState<DriveFolder[]>([])
+  const [foldersLoading, setFoldersLoading] = useState(true)
+  const [foldersError, setFoldersError] = useState<string | null>(null)
+  const [folderQuery, setFolderQuery] = useState('')
+  const [selectedFolder, setSelectedFolder] = useState<DriveFolder | null>(null)
+  const [files, setFiles] = useState<DriveFile[]>([])
+  const [filesLoading, setFilesLoading] = useState(false)
+  const [filesError, setFilesError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+    window.wos.meetings.listDriveFolders().then(res => {
+      if (!mounted) return
+      if (res.error) setFoldersError(res.error)
+      else setFolders(res.folders as DriveFolder[])
+      setFoldersLoading(false)
+    })
+    return () => { mounted = false }
+  }, [])
+
+  const pickFolder = async (folder: DriveFolder) => {
+    setSelectedFolder(folder)
+    setStep('files')
+    setFilesLoading(true)
+    setFilesError(null)
+    setFiles([])
+    try {
+      const { files: f, error } = await window.wos.meetings.listDriveFiles({ folderId: folder.id })
+      if (error) throw new Error(error)
+      setFiles(f as DriveFile[])
+    } catch (err) {
+      setFilesError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setFilesLoading(false)
+    }
+  }
+
+  const filteredFolders = folders.filter(f => f.name.toLowerCase().includes(folderQuery.toLowerCase()))
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.55)' }}>
+      <div className="w-full max-w-md rounded-2xl overflow-hidden" style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
+        <div className="flex items-center gap-2 p-4" style={{ borderBottom: '1px solid var(--border)' }}>
+          {step === 'files' && (
+            <button onClick={() => setStep('folders')} className="rounded-lg p-1" style={{ color: 'var(--muted-foreground)' }}>
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+          )}
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-semibold truncate">
+              {step === 'folders' ? 'Browse Google Drive' : selectedFolder?.name}
+            </h3>
+            <p className="text-[11px]" style={{ color: 'var(--muted-foreground)' }}>
+              {step === 'folders' ? 'Choose a folder to browse files' : 'Select a file to analyze'}
+            </p>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1 shrink-0" style={{ color: 'var(--muted-foreground)' }}>
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="p-4">
+          {step === 'folders' ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 rounded-lg px-2" style={{ border: '1px solid var(--border)', background: 'var(--input)' }}>
+                <Search className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--muted-foreground)' }} />
+                <input
+                  autoFocus
+                  value={folderQuery}
+                  onChange={e => setFolderQuery(e.target.value)}
+                  placeholder="Search folders..."
+                  className="min-w-0 flex-1 bg-transparent py-2 text-xs outline-none"
+                  style={{ color: 'var(--foreground)' }}
+                />
+              </div>
+              <div className="overflow-y-auto space-y-1" style={{ maxHeight: '300px' }}>
+                {foldersLoading ? (
+                  <div className="flex items-center justify-center gap-2 py-6 text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading folders...
+                  </div>
+                ) : foldersError ? (
+                  <div className="flex items-start gap-2 p-3 text-xs" style={{ border: '1px solid var(--border)', color: 'var(--muted-foreground)' }}>
+                    <AlertCircle className="h-4 w-4 shrink-0" /> {foldersError}
+                  </div>
+                ) : filteredFolders.length === 0 ? (
+                  <p className="py-6 text-center text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                    {folderQuery ? 'No folders match your search.' : 'No folders found in Google Drive.'}
+                  </p>
+                ) : (
+                  filteredFolders.map(folder => (
+                    <button
+                      key={folder.id}
+                      onClick={() => void pickFolder(folder)}
+                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left transition-colors hover:opacity-80"
+                      style={{ border: '1px solid var(--border)', background: 'var(--background)' }}
+                    >
+                      <Folder className="h-4 w-4 shrink-0" style={{ color: 'var(--amber)' }} />
+                      <span className="min-w-0 flex-1 truncate text-sm">{folder.name}</span>
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--muted-foreground)' }} />
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="overflow-y-auto space-y-2" style={{ maxHeight: '320px' }}>
+              {filesLoading ? (
+                <div className="flex items-center justify-center gap-2 py-6 text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Scanning folder...
+                </div>
+              ) : filesError ? (
+                <div className="flex items-start gap-2 p-3 text-xs" style={{ border: '1px solid var(--border)', color: 'var(--muted-foreground)' }}>
+                  <AlertCircle className="h-4 w-4 shrink-0" /> {filesError}
+                </div>
+              ) : files.length === 0 ? (
+                <p className="py-8 text-center text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                  No supported files (video, audio, transcript, PDF, DOCX) in this folder.
+                </p>
+              ) : (
+                files.map(file => (
+                  <div key={file.id} className="flex items-center gap-3 rounded-xl p-3" style={{ border: '1px solid var(--border)', background: 'var(--background)' }}>
+                    {fileCategoryIcon(file.fileCategory)}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{file.displayName || file.name}</p>
+                      <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                        {formatDateValue(file.date)}{file.size ? ` · ${formatFileSize(file.size)}` : ''}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => { onAnalyze(file); onClose() }}
+                      className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium"
+                      style={{ background: 'var(--amber)', color: '#000' }}
+                    >
+                      Analyze
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end p-4" style={{ borderTop: '1px solid var(--border)' }}>
+          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm" style={{ border: '1px solid var(--border)' }}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function DriveImportCard({
   googleConnected,
   driveLoading,
   driveError,
-  driveRecordings,
+  driveFiles,
+  watchedFolderName,
+  driveLastScanned,
   onRefresh,
   onAnalyze,
+  onChooseFolder,
+  onBrowseFile,
 }: {
   googleConnected: boolean
   driveLoading: boolean
   driveError: string | null
-  driveRecordings: DriveRecording[]
+  driveFiles: DriveFile[]
+  watchedFolderName: string | null
+  driveLastScanned: Date | null
   onRefresh: () => void
-  onAnalyze: (recording: DriveRecording) => void
+  onAnalyze: (file: DriveFile) => void
+  onChooseFolder: () => void
+  onBrowseFile: () => void
 }) {
   return (
     <div className="rounded-2xl p-4" style={{ border: '1px solid var(--border)', background: 'var(--card)' }}>
       <div className="mb-3 flex items-center justify-between gap-2">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--muted-foreground)' }}>From Google Drive</p>
-          <p className="text-[11px]" style={{ color: 'var(--muted-foreground)' }}>Meet recordings appear here when Google Workspace is connected.</p>
+          <p className="text-[11px]" style={{ color: 'var(--muted-foreground)' }}>
+            {driveLastScanned ? `Scanned ${formatTimeAgo(driveLastScanned)} · auto-refreshes every 3h` : 'Select a folder to watch for saved meetings and files.'}
+          </p>
         </div>
-        <button onClick={onRefresh} disabled={driveLoading} className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs disabled:opacity-50" style={{ color: 'var(--muted-foreground)' }}>
-          <RefreshCw className={cn('h-3.5 w-3.5', driveLoading && 'animate-spin')} /> Refresh
+        <div className="flex items-center gap-1">
+          <button onClick={onBrowseFile} disabled={!googleConnected} className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs disabled:opacity-50" style={{ color: 'var(--muted-foreground)' }}>
+            <Search className="h-3.5 w-3.5" /> Browse
+          </button>
+          <button onClick={onRefresh} disabled={driveLoading || !watchedFolderName} className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs disabled:opacity-50" style={{ color: 'var(--muted-foreground)' }}>
+            <RefreshCw className={cn('h-3.5 w-3.5', driveLoading && 'animate-spin')} /> Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* Folder selector row */}
+      <div className="mb-3 flex items-center gap-2 rounded-xl p-2.5" style={{ border: '1px solid var(--border)', background: 'var(--background)' }}>
+        <Folder className="h-4 w-4 shrink-0" style={{ color: watchedFolderName ? 'var(--amber)' : 'var(--muted-foreground)' }} />
+        <span className="min-w-0 flex-1 truncate text-sm" style={{ color: watchedFolderName ? 'var(--foreground)' : 'var(--muted-foreground)' }}>
+          {watchedFolderName ?? 'No folder selected'}
+        </span>
+        <button
+          onClick={onChooseFolder}
+          disabled={!googleConnected}
+          className="shrink-0 rounded-lg px-2.5 py-1 text-xs font-medium disabled:opacity-50"
+          style={{ background: 'var(--secondary)', color: 'var(--foreground)', border: '1px solid var(--border)' }}
+        >
+          {watchedFolderName ? 'Change' : 'Choose folder'}
         </button>
       </div>
+
       {!googleConnected ? (
-        <p className="rounded-xl p-3 text-xs" style={{ border: '1px solid var(--border)', color: 'var(--muted-foreground)' }}>Connect Google Workspace in Settings to discover Meet recordings.</p>
+        <p className="rounded-xl p-3 text-xs" style={{ border: '1px solid var(--border)', color: 'var(--muted-foreground)' }}>Connect Google Workspace in Settings to browse Drive.</p>
+      ) : !watchedFolderName ? (
+        <div className="rounded-xl p-5 text-center" style={{ border: '1px dashed var(--border)' }}>
+          <FolderOpen className="mx-auto mb-2 h-6 w-6" style={{ color: 'var(--muted-foreground)' }} />
+          <p className="text-xs font-medium">Choose a folder to get started</p>
+          <p className="mt-1 text-[11px]" style={{ color: 'var(--muted-foreground)' }}>WOS will list videos, audio, transcripts, and documents from that folder.</p>
+        </div>
       ) : driveLoading ? (
         <div className="flex items-center justify-center gap-2 rounded-xl p-5 text-xs" style={{ border: '1px solid var(--border)', color: 'var(--muted-foreground)' }}>
-          <Loader2 className="h-4 w-4 animate-spin" /> Scanning Meet Recordings...
+          <Loader2 className="h-4 w-4 animate-spin" /> Scanning folder...
         </div>
       ) : driveError ? (
         <div className="flex items-start gap-2 rounded-xl p-3 text-xs" style={{ border: '1px solid var(--border)', color: 'var(--muted-foreground)' }}>
           <AlertCircle className="h-4 w-4 shrink-0" /> {driveError}
         </div>
-      ) : driveRecordings.length === 0 ? (
+      ) : driveFiles.length === 0 ? (
         <div className="rounded-xl p-5 text-center" style={{ border: '1px dashed var(--border)' }}>
           <FolderOpen className="mx-auto mb-2 h-6 w-6" style={{ color: 'var(--muted-foreground)' }} />
-          <p className="text-xs font-medium">No recordings found</p>
+          <p className="text-xs font-medium">No supported files found</p>
+          <p className="mt-1 text-[11px]" style={{ color: 'var(--muted-foreground)' }}>Add videos, audio, transcripts, PDFs, or DOCX files to this folder.</p>
         </div>
       ) : (
         <div className="space-y-2">
-          {driveRecordings.map(rec => (
-            <div key={rec.id} className="flex items-center justify-between gap-3 rounded-xl p-3" style={{ border: '1px solid var(--border)', background: 'var(--background)' }}>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{rec.displayName || rec.name}</p>
-                <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>{formatDateValue(rec.date)}{rec.size ? ` - ${formatFileSize(rec.size)}` : ''} - {rec.hasTranscript ? 'Transcript found' : 'Video only'}</p>
+          {driveFiles.map(file => (
+            <div key={file.id} className="flex items-center gap-3 rounded-xl p-3" style={{ border: '1px solid var(--border)', background: 'var(--background)' }}>
+              {fileCategoryIcon(file.fileCategory)}
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{file.displayName || file.name}</p>
+                <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                  {formatDateValue(file.date)}
+                  {file.size ? ` · ${formatFileSize(file.size)}` : ''}
+                  {file.fileCategory === 'video' && file.hasTranscript ? ' · Transcript ✓' : ''}
+                  {file.fileCategory === 'video' && !file.hasTranscript ? ' · Video only' : ''}
+                  {file.fileCategory === 'audio' ? ' · Audio' : ''}
+                  {file.fileCategory === 'document' ? ' · Document' : ''}
+                  {file.fileCategory === 'transcript' ? ' · Transcript' : ''}
+                </p>
               </div>
-              <button onClick={() => onAnalyze(rec)} className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: 'var(--amber)', color: '#000' }}>
+              <button onClick={() => onAnalyze(file)} className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: 'var(--amber)', color: '#000' }}>
                 Analyze
               </button>
             </div>
@@ -858,10 +1177,15 @@ export function AnalyzeTab({ googleConnected, onOpenChat }: AnalyzeTabProps) {
   const [analyzeMode, setAnalyzeMode] = useState<AnalyzeMode>('home')
   const [activity, setActivity] = useState<ActivityEntry[]>([])
   const [dragActive, setDragActive] = useState(false)
-  const [driveFolderId, setDriveFolderId] = useState<string | null>(null)
-  const [driveRecordings, setDriveRecordings] = useState<DriveRecording[]>([])
+  const [watchedFolderId, setWatchedFolderId] = useState<string | null>(null)
+  const [watchedFolderName, setWatchedFolderName] = useState<string | null>(null)
+  const [showFolderPicker, setShowFolderPicker] = useState(false)
+  const [driveFiles, setDriveFiles] = useState<DriveFile[]>([])
   const [driveLoading, setDriveLoading] = useState(false)
   const [driveError, setDriveError] = useState<string | null>(null)
+  const [driveLastScanned, setDriveLastScanned] = useState<Date | null>(null)
+  const [showDriveFilePicker, setShowDriveFilePicker] = useState(false)
+  const watchedFolderIdRef = useRef<string | null>(null)
   const [shareDialog, setShareDialog] = useState<ShareDialogState | null>(null)
   const [renameTarget, setRenameTarget] = useState<SavedMeeting | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
@@ -899,31 +1223,57 @@ export function AnalyzeTab({ googleConnected, onOpenChat }: AnalyzeTabProps) {
     void loadActivity(selectedMeetingId)
   }, [loadActivity, selectedMeetingId])
 
-  const loadDriveRecordings = useCallback(async () => {
+  const loadDriveFiles = useCallback(async (folderId: string) => {
     setDriveLoading(true)
     setDriveError(null)
     try {
-      let folderId = driveFolderId
-      if (!folderId) {
-        const found = await window.wos.meetings.findDriveFolder()
-        if (found.error) throw new Error(found.error)
-        if (!found.folderId) throw new Error('No "Meet Recordings" folder found in Google Drive.')
-        folderId = found.folderId
-        setDriveFolderId(folderId)
-      }
-      const { recordings, error } = await window.wos.meetings.listDriveRecordings({ folderId })
+      const { files, error } = await window.wos.meetings.listDriveFiles({ folderId })
       if (error) throw new Error(error)
-      setDriveRecordings(recordings as DriveRecording[])
+      setDriveFiles(files as DriveFile[])
+      setDriveLastScanned(new Date())
     } catch (err) {
       setDriveError(err instanceof Error ? err.message : String(err))
     } finally {
       setDriveLoading(false)
     }
-  }, [driveFolderId])
+  }, [])
 
   useEffect(() => {
-    if (googleConnected && driveRecordings.length === 0 && !driveLoading && !driveError) void loadDriveRecordings()
-  }, [googleConnected, driveError, driveLoading, driveRecordings.length, loadDriveRecordings])
+    if (!googleConnected) return
+    window.wos.meetings.getDriveConfig().then(({ folderId, folderName }) => {
+      if (folderId) {
+        setWatchedFolderId(folderId)
+        setWatchedFolderName(folderName)
+        watchedFolderIdRef.current = folderId
+        void loadDriveFiles(folderId)
+      }
+    })
+  }, [googleConnected, loadDriveFiles])
+
+  // keep ref in sync so the interval callback always has the latest folderId
+  useEffect(() => { watchedFolderIdRef.current = watchedFolderId }, [watchedFolderId])
+
+  // 3-hour auto-refresh
+  useEffect(() => {
+    if (!watchedFolderId || !googleConnected) return
+    const id = setInterval(() => {
+      const fid = watchedFolderIdRef.current
+      if (fid) void loadDriveFiles(fid)
+    }, 3 * 60 * 60 * 1000)
+    return () => clearInterval(id)
+  }, [watchedFolderId, googleConnected, loadDriveFiles])
+
+  const handleSelectFolder = useCallback(async (folder: DriveFolder) => {
+    setWatchedFolderId(folder.id)
+    setWatchedFolderName(folder.name)
+    setDriveFiles([])
+    setDriveError(null)
+    setDriveLastScanned(null)
+    setShowFolderPicker(false)
+    watchedFolderIdRef.current = folder.id
+    await window.wos.meetings.setDriveConfig({ folderId: folder.id, folderName: folder.name })
+    void loadDriveFiles(folder.id)
+  }, [loadDriveFiles])
 
   const selectMeeting = useCallback((meeting: SavedMeeting) => {
     setSelectedMeetingId(meeting.id)
@@ -1001,9 +1351,9 @@ export function AnalyzeTab({ googleConnected, onOpenChat }: AnalyzeTabProps) {
     if (file) handleNativeFile(file)
   }, [handleNativeFile])
 
-  const handleAnalyzeDrive = useCallback(async (recording: DriveRecording) => {
-    const title = recording.displayName || recording.name.replace(/\.[^.]+$/, '')
-    const pending = await window.wos.meetings.createPending({ title, source: 'drive', sourceUri: recording.webViewLink ?? recording.id })
+  const handleAnalyzeDrive = useCallback(async (file: DriveFile) => {
+    const title = file.displayName || file.name.replace(/\.[^.]+$/, '')
+    const pending = await window.wos.meetings.createPending({ title, source: 'drive', sourceUri: file.webViewLink ?? file.id })
     if (!pending.id) {
       toast.error(pending.error ?? 'Could not create Drive transcript row')
       return
@@ -1013,20 +1363,27 @@ export function AnalyzeTab({ googleConnected, onOpenChat }: AnalyzeTabProps) {
     setAnalyzeMode('detail')
     await loadSavedMeetings()
     try {
-      let transcript: string | null = null
-      if (recording.hasTranscript && recording.transcriptFileId && recording.transcriptName) {
-        await window.wos.meetings.updateStatus({ id, status: 'reading', message: 'Reading transcript from Drive', progress: 35 })
-        const res = await window.wos.meetings.getDriveTranscript({ fileId: recording.transcriptFileId, fileName: recording.transcriptName })
-        if (res.error) throw new Error(res.error)
-        transcript = res.transcript
-      } else {
-        await window.wos.meetings.updateStatus({ id, status: 'transcribing', message: 'Transcribing Drive recording locally', progress: 35 })
-        const res = await window.wos.meetings.transcribeDriveVideo({ fileId: recording.id, fileName: recording.name })
-        if (res.error) throw new Error(res.error)
-        transcript = res.transcript
-      }
-      if (!transcript) throw new Error('Empty transcript')
-      await processTranscript(id, title, transcript, 'drive', recording.webViewLink ?? recording.id)
+      const useTranscript = file.hasTranscript && !!file.transcriptFileId && !!file.transcriptName
+      const srcId = useTranscript ? file.transcriptFileId! : file.id
+      const srcName = useTranscript ? file.transcriptName! : file.name
+      const srcMime = useTranscript ? 'text/vtt' : file.mimeType
+
+      const statusMsg =
+        file.fileCategory === 'video' ? (useTranscript ? 'Reading transcript from Drive' : 'Transcribing Drive video') :
+        file.fileCategory === 'audio' ? 'Transcribing Drive audio' :
+        file.fileCategory === 'document' ? 'Reading Drive document' : 'Reading transcript'
+      const statusKind = (file.fileCategory === 'transcript' || useTranscript) ? 'reading' : 'transcribing'
+
+      await window.wos.meetings.updateStatus({ id, status: statusKind, message: statusMsg, progress: 35 })
+      await loadSavedMeetings()
+
+      const res = await window.wos.meetings.processDriveFile({ fileId: srcId, fileName: srcName, mimeType: srcMime })
+      if (res.error) throw new Error(res.error)
+      if (!res.transcript) throw new Error('No text detected in file')
+
+      await window.wos.meetings.updateStatus({ id, status: 'analyzing', message: 'Analyzing with Meeting Agent', progress: 80 })
+      await loadSavedMeetings()
+      await processTranscript(id, title, res.transcript, 'drive', file.webViewLink ?? file.id)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       await window.wos.meetings.updateStatus({ id, status: 'error', message: 'Needs retry', progress: 100, lastError: message })
@@ -1166,9 +1523,16 @@ export function AnalyzeTab({ googleConnected, onOpenChat }: AnalyzeTabProps) {
                 googleConnected={googleConnected}
                 driveLoading={driveLoading}
                 driveError={driveError}
-                driveRecordings={driveRecordings}
-                onRefresh={() => { setDriveFolderId(null); void loadDriveRecordings() }}
-                onAnalyze={(rec) => void handleAnalyzeDrive(rec)}
+                driveFiles={driveFiles}
+                watchedFolderName={watchedFolderName}
+                driveLastScanned={driveLastScanned}
+                onRefresh={() => {
+                  const fid = watchedFolderIdRef.current
+                  if (fid) { setDriveFiles([]); void loadDriveFiles(fid) }
+                }}
+                onAnalyze={(file) => void handleAnalyzeDrive(file)}
+                onChooseFolder={() => setShowFolderPicker(true)}
+                onBrowseFile={() => setShowDriveFilePicker(true)}
               />
 
               <ActivityLog entries={homeActivity} />
@@ -1176,6 +1540,20 @@ export function AnalyzeTab({ googleConnected, onOpenChat }: AnalyzeTabProps) {
           )}
         </main>
       </div>
+
+      {showFolderPicker && googleConnected && (
+        <DriveFolderPickerModal
+          onClose={() => setShowFolderPicker(false)}
+          onSelect={(folder) => void handleSelectFolder(folder)}
+        />
+      )}
+
+      {showDriveFilePicker && googleConnected && (
+        <DriveFilePickerModal
+          onClose={() => setShowDriveFilePicker(false)}
+          onAnalyze={(file) => void handleAnalyzeDrive(file)}
+        />
+      )}
 
       {shareDialog && (
         <ShareDialog

@@ -59,10 +59,12 @@ function upsertScope(appId: string, scope: string, data: unknown[], etag?: strin
 export async function buildSnapshot(appId: string, creds: Record<string, string>): Promise<void> {
   const app = getApp(appId)
   if (!app?.snapshot) return
+  console.log(`[snapshot] building snapshot for ${appId}...`)
   const result = await app.snapshot(creds)
   for (const [scope, items] of Object.entries(result)) {
     upsertScope(appId, scope, items)
   }
+  console.log(`[snapshot] built snapshot for ${appId}: ${Object.keys(result).join(', ')}`)
   notifyWrite()
 }
 
@@ -96,6 +98,7 @@ export async function refreshSnapshot(appId: string, scope?: string): Promise<vo
   const app = getApp(appId)
   if (!app?.snapshot) return
 
+  console.log(`[snapshot] refreshing ${appId}/${scope ?? '*'}...`)
   try {
     const result = await app.snapshot(conn.creds)
     if (scope) {
@@ -107,6 +110,7 @@ export async function refreshSnapshot(appId: string, scope?: string): Promise<vo
         upsertScope(appId, s, items)
       }
     }
+    console.log(`[snapshot] refreshed ${appId}/${scope ?? '*'}`)
     notifyWrite()
   } catch (err) {
     console.error(`[snapshot] refreshSnapshot failed for ${appId}/${scope ?? '*'}`, err)

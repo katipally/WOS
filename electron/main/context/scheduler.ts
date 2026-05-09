@@ -35,6 +35,7 @@ function scheduleApp(appId: string): void {
   for (const { scope, interval } of scopes) {
     const key = `${appId}:${scope}`
     const handle = setInterval(() => {
+      console.log(`[scheduler] tick: refreshing ${key}`)
       refreshSnapshot(appId, scope).catch(err =>
         console.error(`[scheduler] refresh failed for ${key}`, err),
       )

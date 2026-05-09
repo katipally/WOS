@@ -60,6 +60,7 @@ coverage/
 .playwright-mcp/
 Ref/
 .vscode
+poster/
 
 # ------------------------------------------------------------
 # Planning docs not intended for repo

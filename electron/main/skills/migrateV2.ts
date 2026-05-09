@@ -24,7 +24,7 @@ import path from 'node:path'
 import matter from 'gray-matter'
 import { skillsDir, agentSkillsDir, wosHome, ensureDir } from '../paths'
 
-const KNOWN_PACKS = new Set(['wos', 'meeting', 'projects', 'automation'])
+const KNOWN_PACKS = new Set(['wos', 'meeting', 'projects', 'automation', 'code'])
 
 function sentinelPath(): string {
   return path.join(wosHome(), '.migration_v2_done')

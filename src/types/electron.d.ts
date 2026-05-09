@@ -143,6 +143,55 @@ interface WosAPI {
     onCaptionUpdate: (callback: (data: { text: string; timestamp: number }) => void) => () => void
     onMeetingClosed: (callback: (data?: { id?: string; analyzed?: boolean; captionCount?: number }) => void) => () => void
     onAnalysisError: (callback: (data: { error: string | null }) => void) => () => void
+    listDriveFolders: () => Promise<{ folders: unknown[]; error: string | null }>
+    listDriveFiles: (params: { folderId: string }) => Promise<{ files: unknown[]; error: string | null }>
+    getDriveConfig: () => Promise<{ folderId: string | null; folderName: string | null }>
+    setDriveConfig: (params: { folderId: string | null; folderName: string | null }) => Promise<{ ok: boolean }>
+    processDriveFile: (params: { fileId: string; fileName: string; mimeType: string }) => Promise<{ transcript: string | null; error: string | null }>
+  }
+
+  automations: {
+    list: (filter?: { kind?: string; enabled?: boolean }) => Promise<AutomationRow[]>
+    get: (id: string) => Promise<AutomationRow | null>
+    upsert: (input: unknown) => Promise<AutomationRow>
+    toggle: (id: string, enabled: boolean) => Promise<AutomationRow | null>
+    delete: (id: string) => Promise<{ ok: boolean }>
+    runNow: (id: string, dryRun?: boolean) => Promise<{ ok: boolean; runId?: string; output?: string; error?: string | null }>
+    runs: (id?: string, limit?: number) => Promise<AutomationAuditRun[]>
+    webhookInfo: (id: string) => Promise<{ slug: string; secret: string; localUrl: string; publicUrl: string | null } | null>
+    reloadAll: () => Promise<{ ok: boolean }>
+    parseDescription: (description: string) => Promise<{
+      ok: boolean
+      spec?: AutomationParsedSpec
+      clarifications?: AutomationClarification[]
+      missingApps?: Array<{ appId: string; name: string }>
+      error?: string
+    }>
+    listTools: () => Promise<Array<{ name: string; description: string; tags: string[] }>>
+    answerQuestion: (questionId: string, answer: string) => Promise<{ ok: boolean; promptUpdated?: boolean }>
+    diagnoseRun: (runId: string) => Promise<{
+      ok: boolean
+      explanation?: string
+      suggestions?: string[]
+      actionType?: 'reconnect_app' | 'edit_prompt' | 'configure_model' | 'other'
+      error?: string
+    }>
+    onError: (cb: (e: { id: string; runId: string; error: string }) => void) => () => void
+    onResult: (cb: (e: { id: string; runId: string | null; name: string; output: string }) => void) => () => void
+    onOpen: (cb: (e: { automationId: string; runId?: string }) => void) => () => void
+    onQuestion: (cb: (e: {
+      automationId: string
+      runId: string
+      questionId: string
+      question: string
+      extras?: import('./index').AskUserExtras
+      choices?: string[]
+    }) => void) => () => void
+    onRunEvent: (cb: (e: {
+      runId: string
+      automationId: string
+      event: import('./index').AgentEvent | { type: 'run_complete'; status: string; error?: string }
+    }) => void) => () => void
   }
 
   projects: {
@@ -321,6 +370,57 @@ interface RuleInfo {
   alwaysApply: boolean
   globs: string[]
   enabled: boolean
+}
+
+interface AutomationRow {
+  id: string
+  kind: 'schedule' | 'hook' | 'webhook'
+  name: string
+  description: string | null
+  enabled: boolean
+  prompt: string
+  toolsAllow: string[]
+  config: Record<string, unknown>
+  resultDelivery: 'silent' | 'notify' | 'chat' | 'external'
+  resultTarget: string | null
+  createdAt: string | Date
+  updatedAt: string | Date
+  lastRunAt: string | Date | null
+  nextRunAt: string | Date | null
+}
+
+interface AutomationAuditRun {
+  id: string
+  automationId: string
+  startedAt: string | Date
+  endedAt: string | Date | null
+  status: 'running' | 'success' | 'error' | 'cancelled' | 'dryrun'
+  output: string | null
+  error: string | null
+  trigger: unknown
+  toolCalls: unknown
+  scratchDir?: string | null
+}
+
+interface AutomationParsedSpec {
+  name: string
+  kind: 'schedule' | 'hook' | 'webhook'
+  summary: string[]
+  prompt: string
+  schedule?: { mode: string; at?: string; every?: string; cron?: string; tz?: string }
+  hook?: { event: string }
+  webhook?: Record<string, unknown>
+  delivery?: { kind: string }
+  requiredApps?: string[]
+}
+
+interface AutomationClarification {
+  key: string
+  question: string
+  kind: 'choice' | 'text'
+  choices?: Array<{ id: string; label: string; description?: string; value: string }>
+  placeholder: string
+  allowFreeform: boolean
 }
 
 interface Window {

@@ -61,7 +61,7 @@ function listSkillDirs(rootDir: string): string[] {
 }
 
 /** Pack ids that get a per-agent skills folder under `~/.wos/agents/<id>/skills/`. */
-const AGENT_SCOPES = ['wos', 'meeting', 'projects', 'automation'] as const
+const AGENT_SCOPES = ['wos', 'meeting', 'projects', 'automation', 'code'] as const
 
 export function scanSkills(): SkillRecord[] {
   ensureDir(skillsDir())
