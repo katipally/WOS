@@ -18,7 +18,7 @@ test('d2: app_context_snapshots can be seeded via harnessDb', async () => {
 
     // Seed a Slack channel snapshot.
     await db.queryAll(`
-      INSERT OR REPLACE INTO app_context_snapshots (appId, scope, data, fetchedAt)
+      INSERT OR REPLACE INTO app_context_snapshots (app_id, scope, data_json, fetched_at)
       VALUES (
         'slack',
         'channels',
@@ -29,7 +29,7 @@ test('d2: app_context_snapshots can be seeded via harnessDb', async () => {
 
     // Seed a GitHub repos snapshot.
     await db.queryAll(`
-      INSERT OR REPLACE INTO app_context_snapshots (appId, scope, data, fetchedAt)
+      INSERT OR REPLACE INTO app_context_snapshots (app_id, scope, data_json, fetched_at)
       VALUES (
         'github',
         'repos',
@@ -40,7 +40,7 @@ test('d2: app_context_snapshots can be seeded via harnessDb', async () => {
 
     // Verify both rows are queryable.
     const rows = await db.queryAll<{ appId: string; scope: string; fetchedAt: number }>(
-      `SELECT appId, scope, fetchedAt FROM app_context_snapshots ORDER BY appId, scope`,
+      `SELECT app_id as appId, scope, fetched_at as fetchedAt FROM app_context_snapshots ORDER BY app_id, scope`,
     )
     expect(rows.length).toBe(2)
     expect(rows[0].appId).toBe('github')
@@ -66,12 +66,12 @@ test('d2: snapshot data is parseable JSON', async () => {
       { id: 'C002', name: 'engineering' },
     ]
     await db.queryAll(`
-      INSERT OR REPLACE INTO app_context_snapshots (appId, scope, data, fetchedAt)
+      INSERT OR REPLACE INTO app_context_snapshots (app_id, scope, data_json, fetched_at)
       VALUES ('slack', 'channels', '${JSON.stringify(channels)}', ${Date.now()})
     `)
 
     const row = await db.queryOne<{ data: string }>(
-      `SELECT data FROM app_context_snapshots WHERE appId='slack' AND scope='channels'`,
+      `SELECT data_json as data FROM app_context_snapshots WHERE app_id='slack' AND scope='channels'`,
     )
     expect(row).toBeDefined()
     const parsed = JSON.parse(row!.data) as Array<{ id: string; name: string }>
@@ -92,7 +92,7 @@ test('d2: snapshot survives re-launch with same userDataDir', async () => {
     savedUserDataDir = wos.userDataDir
     try {
       await db.queryAll(`
-        INSERT OR REPLACE INTO app_context_snapshots (appId, scope, data, fetchedAt)
+        INSERT OR REPLACE INTO app_context_snapshots (app_id, scope, data_json, fetched_at)
         VALUES ('slack', 'channels', '[{"id":"C001","name":"general"}]', ${now})
       `)
     } finally {
@@ -108,7 +108,7 @@ test('d2: snapshot survives re-launch with same userDataDir', async () => {
   })
   try {
     const row = await db2.queryOne<{ data: string; fetchedAt: number }>(
-      `SELECT data, fetchedAt FROM app_context_snapshots WHERE appId='slack' AND scope='channels'`,
+      `SELECT data_json as data, fetched_at as fetchedAt FROM app_context_snapshots WHERE app_id='slack' AND scope='channels'`,
     )
     expect(row).toBeDefined()
     expect(row!.fetchedAt).toBe(now)

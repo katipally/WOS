@@ -16,7 +16,7 @@ test('d1: chat textarea is visible on boot', async () => {
   const { wos, db } = await withStub({ scriptPath: stubPath('simple-reply.json') })
   try {
     await expect(wos.window).toHaveTitle(/.+/, { timeout: 30_000 })
-    const textarea = wos.window.getByPlaceholder('Send a message… (/ for commands, @ to attach a file)')
+    const textarea = wos.window.getByPlaceholder('Plan, build, or ask anything… (type / or @)')
     await expect(textarea).toBeVisible()
     await expect(wos.window.getByText('Start a conversation')).toBeVisible()
   } finally {

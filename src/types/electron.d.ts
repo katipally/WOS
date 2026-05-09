@@ -38,9 +38,9 @@ interface WosAPI {
   getAgentSettings: () => Promise<{ success: boolean; agents: AgentSettingsRecord[]; resolved: AgentSettingsRecord[] }>
   saveAgentSettings: (input: AgentSettingsSaveInput) => Promise<{ success: boolean; config?: Record<string, unknown> }>
 
-  saveApiKey: (provider: 'openai' | 'anthropic' | 'huggingface-space', key: string) => Promise<{ success: boolean }>
+  saveApiKey: (provider: 'openai' | 'anthropic' | 'huggingface-space' | 'nvidia-nim', key: string) => Promise<{ success: boolean }>
   getApiKeysPresence: () => Promise<Record<string, boolean>>
-  testApiKey: (provider: 'openai' | 'anthropic' | 'huggingface-space', key: string) => Promise<{ ok: boolean; modelCount?: number; error?: string }>
+  testApiKey: (provider: 'openai' | 'anthropic' | 'huggingface-space' | 'nvidia-nim', key: string) => Promise<{ ok: boolean; modelCount?: number; error?: string }>
 
   fetchModels: (provider: 'openai' | 'anthropic', apiKey: string) => Promise<{ success: boolean; models: import('./index').ModelInfo[]; error?: string }>
   fetchSavedModels: () => Promise<{ success: boolean; models: import('./index').ModelInfo[]; errors?: Array<{ provider: string; error?: string }> }>

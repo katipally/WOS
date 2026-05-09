@@ -46,6 +46,7 @@ export interface AskUserExtras {
 export type AgentEvent =
   | { type: 'text_delta'; content: string }
   | { type: 'reasoning_delta'; content: string }
+  | { type: 'thinking_delta'; content: string }
   | { type: 'tool_preparing'; toolName: string; toolId: string }
   | { type: 'tool_arg_delta'; toolId: string; delta: string }
   | { type: 'tool_stdout_delta'; toolId: string; delta: string }
@@ -112,7 +113,7 @@ export interface Workspace {
 export interface ModelInfo {
   id: string
   name: string
-  provider: 'openai' | 'anthropic' | 'huggingface-space'
+  provider: 'openai' | 'anthropic' | 'huggingface-space' | 'nvidia-nim'
   contextWindow?: number
   supportsReasoning?: boolean
   supportsVision?: boolean

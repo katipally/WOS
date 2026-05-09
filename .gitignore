@@ -116,3 +116,13 @@ drizzle/**/*.snapshot.json
 drizzle/**/*.snap
 !drizzle/**/*.sql
 e2e/scratch/
+
+# Local clone of HF Space (deploy with QUICKSTART_SPACE.md; do not commit)
+huggingface/wos_demo_space_repo/
+
+# ------------------------------------------------------------
+# Demo packaging excludes
+# ------------------------------------------------------------
+# Keep repository push code-only for demo branch.
+training-data/**
+report_ieee/**

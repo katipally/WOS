@@ -19,15 +19,14 @@ const ALL_AUTOMATION_KINDS = ['schedule', 'hook', 'webhook'] as const
 test('d3: all AutomationKind values can be inserted directly into DB', async () => {
   const { wos, db } = await withStub({ scriptPath: stubPath('simple-reply.json') })
   try {
-    const now = new Date().toISOString()
-
     for (const kind of ALL_AUTOMATION_KINDS) {
       const config = getDefaultConfig(kind)
+      const nowMs = Date.now()
       await db.queryAll(`
         INSERT OR REPLACE INTO automations
-          (id, kind, name, description, enabled, prompt, toolsAllow, config, resultDelivery, createdAt, updatedAt)
+          (id, kind, name, description, enabled, prompt, tools_allow, config, result_delivery, created_at, updated_at)
         VALUES
-          ('e2e-${kind}', '${kind}', 'E2E ${kind} test', 'Inserted by E2E', 1, 'Do ${kind} stuff', '[]', '${JSON.stringify(config)}', 'silent', '${now}', '${now}')
+          ('e2e-${kind}', '${kind}', 'E2E ${kind} test', 'Inserted by E2E', 1, 'Do ${kind} stuff', '[]', '${JSON.stringify(config)}', 'silent', ${nowMs}, ${nowMs})
       `)
     }
 
@@ -51,7 +50,7 @@ test('d3: automations table has expected schema columns', async () => {
       `SELECT name FROM pragma_table_info('automations') ORDER BY name`,
     )
     const colNames = cols.map((c) => c.name)
-    for (const col of ['id', 'kind', 'name', 'enabled', 'prompt', 'toolsAllow', 'config', 'resultDelivery', 'createdAt', 'updatedAt']) {
+    for (const col of ['id', 'kind', 'name', 'enabled', 'prompt', 'tools_allow', 'config', 'result_delivery', 'created_at', 'updated_at']) {
       expect(colNames).toContain(col)
     }
   } finally {

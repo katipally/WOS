@@ -111,6 +111,14 @@ export interface QueryOptions {
   intentModel?: string
   /** When true, skip the intent pre-call (subagents, plan mode, etc.). */
   skipIntent?: boolean
+  /**
+   * Model to use for conversational/analytical requests that need no tools.
+   * When the intent classifier marks a request as conversational and the primary
+   * model is a specialist fine-tuned model (e.g. hfspace:*), this model handles
+   * the response instead — avoiding the specialist model's tool-calling bias.
+   * Defaults to 'claude-haiku-4-5-20251001'.
+   */
+  conversationalModel?: string
 }
 
 /**
@@ -173,7 +181,17 @@ function compactConnectedAppsSection(section: string): string {
 }
 
 function isSmallContextModel(effectiveContextLimit: number): boolean {
-  return effectiveContextLimit <= 10_000
+  // Apply small-context protections (intent-filtering, schema compression,
+  // larger output headroom) for models with ≤40k token context windows.
+  //
+  // Why 40k? A fully-connected WOS instance (Slack 12 + GitHub 15 + Jira 14
+  // + 16 builtins = 57 tools) consumes ~16 000 real tokens for tool schemas
+  // alone under vLLM/Qwen3 tokenization (~2.2 chars/token for JSON).
+  // Even at 32k context this leaves only ~16k for conversation history, so
+  // the intent-based tool filtering and schema compression are still valuable.
+  // Models with >40k context (GPT-4.1, Claude, large OpenAI models) have
+  // abundant headroom and do not need the extra guardrails.
+  return effectiveContextLimit <= 40_000
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -190,12 +208,90 @@ function computeOutputTokenBudget(effectiveContextLimit: number, estimatedPrompt
   return clamp(Math.min(target, available), 128, target)
 }
 
+type ToolDef = { name: string; description: string; inputSchema: object }
+
+/**
+ * Trim tool descriptions to at most maxDescChars per tool.
+ * Tool schemas are the dominant token consumer for small-context models.
+ * A full description + parameter schema can be 200–400 tokens per tool;
+ * with 30–40 connected-app tools this easily saturates an 8k context window
+ * before any conversation history is included.
+ */
+function trimToolDescriptions(tools: ToolDef[], maxDescChars = 120): ToolDef[] {
+  return tools.map(t => ({
+    ...t,
+    description: t.description.length > maxDescChars
+      ? t.description.slice(0, maxDescChars).replace(/\s\S*$/, '') + '…'
+      : t.description,
+  }))
+}
+
+/**
+ * Remove per-parameter description strings from tool input schemas.
+ * Preserves type, enum, required, and other structural fields so the
+ * model can still form valid arguments; only strips free-text descriptions
+ * that inflate token count without affecting call structure.
+ */
+function stripParamDescriptions(tools: ToolDef[]): ToolDef[] {
+  return tools.map(t => {
+    if (!t.inputSchema || typeof t.inputSchema !== 'object') return t
+    const schema = t.inputSchema as Record<string, unknown>
+    const props = schema.properties as Record<string, Record<string, unknown>> | undefined
+    if (!props) return t
+    const stripped: Record<string, Record<string, unknown>> = {}
+    for (const [k, v] of Object.entries(props)) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { description: _d, ...rest } = v
+      stripped[k] = rest
+    }
+    return { ...t, inputSchema: { ...schema, properties: stripped } }
+  })
+}
+
+/**
+ * Progressively compress tool schemas until the estimated token count fits
+ * within the context ceiling. Applied only for small-context models.
+ *
+ * Rounds:
+ *  1. Truncate tool descriptions to ~120 chars each          (~20–30% reduction)
+ *  2. Strip per-parameter description strings                (~further 20%)
+ *  3. Keep only intent-matched + ALWAYS_INCLUDE tools        (~50% reduction)
+ *  4. Keep only ALWAYS_INCLUDE builtins (last resort)
+ */
+function enforceTokenCeiling(
+  tools: ToolDef[],
+  systemPrompt: string,
+  history: import('../providers/types').ConversationMessage[],
+  ceiling: number,
+  alwaysInclude: Set<string>,
+  intentFilter: string[],
+): ToolDef[] {
+  const fits = (ts: ToolDef[]) =>
+    estimateConversationTokens(history, systemPrompt, ts) <= ceiling
+
+  if (fits(tools)) return tools
+
+  const step1 = trimToolDescriptions(tools)
+  if (fits(step1)) return step1
+
+  const step2 = stripParamDescriptions(step1)
+  if (fits(step2)) return step2
+
+  const step3 = step2.filter(
+    t => alwaysInclude.has(t.name) || intentFilter.includes(t.name),
+  )
+  if (fits(step3)) return step3
+
+  // Last resort: builtins only — model can still clarify or delegate.
+  return step2.filter(t => alwaysInclude.has(t.name))
+}
+
 export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEvent> {
   const {
     model, messages, userMessage, workspacePath, mode, reasoningEffort,
     signal, permissionStore, onPermissionRequest, onAskUser, maxDepth = 0,
     systemPromptOverride, systemPromptCustom, systemPromptAppend, apiKeyOverride, onEvent,
-    agentKey, conversationId, contextLimit, intentModel, skipIntent,
+    agentKey, conversationId, contextLimit, intentModel, skipIntent, conversationalModel,
   } = options
 
   const effectiveContextLimit = contextLimit ?? getContextWindow(model) ?? 200_000
@@ -204,6 +300,9 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
   // Run intent analysis once per queryLoop to determine which tools to include.
   // Skip for subagents (maxDepth > 0), plan mode, and when explicitly disabled.
   let intentToolFilter: string[] = []
+  // When true, the request is conversational/analytical — call the model with NO tools
+  // so the fine-tuned model's tool-calling bias cannot fire for non-tool requests.
+  let conversationalRequest = false
   if (!skipIntent && maxDepth === 0 && mode !== 'plan' && !process.env.WOS_E2E_AGENT_SCRIPT) {
     try {
       const { getAllTools: _getAllToolsForIntent } = await import('../tools')
@@ -214,20 +313,30 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
         const intent = await analyzeIntent(
           userMessage, groups, effectiveIntentModel, apiKeyOverride, signal
         )
-        // Only filter when confidence is high enough — otherwise include all tools
-        if (intent.confidence >= 0.6 && intent.toolFilter.length > 0) {
-          intentToolFilter = intent.toolFilter
-          // Also add tools from plugins whose trigger keywords appear in the message
-          const { getPluginTriggerMap } = await import('../plugins/loader')
-          const triggerMap = getPluginTriggerMap()
-          if (triggerMap.size > 0) {
-            const matchedPluginIds = matchPluginTriggers(userMessage, triggerMap)
-            if (matchedPluginIds.length > 0) {
-              // Include all tools belonging to matched plugins
-              const pluginToolNames = allToolNames.filter(name =>
-                matchedPluginIds.some(pid => name.startsWith(`${pid}__`))
-              )
-              intentToolFilter = [...new Set([...intentToolFilter, ...pluginToolNames])]
+
+        if (intent.conversational) {
+          // Purely conversational/analytical — strip all tools so the model cannot
+          // hallucinate tool calls (e.g. calling GitHubListRepos for "explain this codebase").
+          conversationalRequest = true
+        } else {
+          // Accept lower confidence for small-context models so the intent filter
+          // fires more reliably. On an 8k context budget, injecting all tool schemas
+          // without filtering is the single largest cause of context overflow.
+          const intentThreshold = smallCtx ? 0.4 : 0.6
+          if (intent.confidence >= intentThreshold && intent.toolFilter.length > 0) {
+            intentToolFilter = intent.toolFilter
+            // Also add tools from plugins whose trigger keywords appear in the message
+            const { getPluginTriggerMap } = await import('../plugins/loader')
+            const triggerMap = getPluginTriggerMap()
+            if (triggerMap.size > 0) {
+              const matchedPluginIds = matchPluginTriggers(userMessage, triggerMap)
+              if (matchedPluginIds.length > 0) {
+                // Include all tools belonging to matched plugins
+                const pluginToolNames = allToolNames.filter(name =>
+                  matchedPluginIds.some(pid => name.startsWith(`${pid}__`))
+                )
+                intentToolFilter = [...new Set([...intentToolFilter, ...pluginToolNames])]
+              }
             }
           }
         }
@@ -242,7 +351,42 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
   // effectiveMode may change mid-run when the user approves a plan in yolo/default mode.
   let effectiveMode: AgentMode = mode
 
-  const provider = getProvider(model)
+  // Model routing: when the intent classifier marks the request as conversational and
+  // the caller is using a specialist fine-tuned model (hfspace:*), route to a capable
+  // general-purpose model instead. The specialist model was trained overwhelmingly on
+  // tool-calling examples; asking it a conversational question even with no tools
+  // produces poor results (confabulation, looping). Routing avoids this entirely
+  // without any retraining.
+  //
+  // Preferred fallback: the base Qwen3-32B on the same HF Space (USE_LORA=1 mode lets
+  // vLLM serve both the base model and the wos-orch LoRA adapter on one endpoint).
+  // This avoids burning Claude credits and keeps responses in the same domain.
+  // Secondary fallback: conversationalModel option, then claude-haiku.
+  const isSpecialistModel = model.startsWith('hfspace:')
+  let activeModel = model
+  if (conversationalRequest && isSpecialistModel) {
+    if (conversationalModel) {
+      activeModel = conversationalModel
+    } else {
+      // Derive the base model ID on the same Space by replacing the fine-tuned
+      // model name (wos-orch / merged) with the base Qwen3-32B identifier.
+      // Works when the Space runs in USE_LORA=1 mode (vLLM serves both).
+      try {
+        const { decodeHuggingFaceSpaceModelId, encodeHuggingFaceSpaceModelId } = await import('../providers/huggingfaceSpaces')
+        const decoded = decodeHuggingFaceSpaceModelId(model)
+        if (decoded) {
+          // Route to the base model on the same Space endpoint.
+          activeModel = encodeHuggingFaceSpaceModelId(decoded.spaceId, 'unsloth/Qwen3-32B-bnb-4bit')
+        } else {
+          activeModel = 'claude-haiku-4-5-20251001'
+        }
+      } catch {
+        activeModel = 'claude-haiku-4-5-20251001'
+      }
+    }
+  }
+
+  const provider = getProvider(activeModel)
 
   // Pull rules + skills prompt sections (cheap — just reads from DB).
   let rulesSection = ''
@@ -310,14 +454,31 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
       'WebFetch', 'WebSearch', 'Task', 'AskUser', 'TodoWrite',
       'EnterPlanMode', 'ExitPlanMode', 'ReadSkill', 'ReadAppSkill', 'ReadRule',
     ])
-    let filteredTools = intentToolFilter.length > 0
-      ? allTools.filter(t => ALWAYS_INCLUDE.has(t.name) || intentToolFilter.includes(t.name))
-      : allTools
+
+    // For conversational/analytical requests, restrict to a safe general-purpose tool set.
+    // Workplace-app tools (Slack, GitHub, Jira, etc.) are excluded — those are for the
+    // specialist model and would trigger hallucinated tool calls on any model without
+    // fine-tuned tool-calling discipline.
+    // WebSearch/WebFetch are kept so the model can answer research questions.
+    // AskUser is kept for clarifications. Task is kept for delegation.
+    const CONVERSATIONAL_TOOLS = new Set([
+      'WebSearch', 'WebFetch', 'AskUser', 'Task', 'TodoWrite',
+    ])
+    type RuntimeTool = (typeof allTools)[number]
+
+    let filteredTools: RuntimeTool[] = conversationalRequest
+      ? allTools.filter(t => CONVERSATIONAL_TOOLS.has(t.name))
+      : intentToolFilter.length > 0
+        ? allTools.filter(t => ALWAYS_INCLUDE.has(t.name) || intentToolFilter.includes(t.name))
+        : allTools
 
     // Small-context guardrail: if we didn't get a confident intent filter, avoid sending
     // *every* tool schema to the model (tool schemas count toward context in most servers).
     // Prefer connected-app tools + core builtins as a safe default.
-    if (smallCtx && intentToolFilter.length === 0) {
+    // NOTE: intentToolFilter is empty when intent confidence fell below threshold.
+    // For small-context models we accept lower confidence (0.4 vs 0.6) so the
+    // filter fires more reliably instead of falling back to all tools.
+    if (!conversationalRequest && smallCtx && intentToolFilter.length === 0) {
       filteredTools = allTools.filter(t =>
         ALWAYS_INCLUDE.has(t.name) ||
         t.name.startsWith('Slack') ||
@@ -332,9 +493,9 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
 
     // Absolute cap for tiny-context models to avoid pathological prompts.
     if (smallCtx && filteredTools.length > 80) {
-      const keep = new Map(filteredTools.map(t => [t.name, t]))
+      const keep = new Map<string, RuntimeTool>(filteredTools.map(t => [t.name, t]))
       const coreOrder = [...ALWAYS_INCLUDE]
-      const out: typeof filteredTools = []
+      const out: RuntimeTool[] = []
       for (const name of coreOrder) {
         const t = keep.get(name)
         if (t) out.push(t)
@@ -346,7 +507,7 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
       filteredTools = out
     }
 
-    const toolDefs = (maxDepth > 0
+    let toolDefs: ToolDef[] = (maxDepth > 0
       ? filteredTools.filter(t => t.name !== 'Task') // No recursive subagents
       : filteredTools
     ).map(t => ({
@@ -355,17 +516,38 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
       inputSchema: t.inputSchema,
     }))
 
+    // ── Small-context pre-flight enforcement ──────────────────────────────────
+    // Tool schemas are the dominant token consumer: 30–40 connected-app tools
+    // with verbose parameter descriptions can consume 5 000–7 000 tokens,
+    // leaving no room for conversation history or output on an 8k model.
+    // Apply progressive schema compression *before* the API call so the request
+    // never arrives with more input tokens than the server can accept.
+    // For small-context models (≤10k tokens), reserve 1500 tokens instead of 768.
+    // The extra headroom absorbs token-estimator inaccuracy for JSON schema content
+    // (real tokenizer runs ~20-30% hotter than our 4-char/token heuristic).
+    // This means the enforceTokenCeiling ceiling is 8192-1500=6692 on an 8k model,
+    // giving reliable headroom before vLLM rejects the request with a 400.
+    const minOutputHeadroom = smallCtx ? 1500 : 2048
+    if (smallCtx) {
+      const ceiling = effectiveContextLimit - minOutputHeadroom
+      toolDefs = enforceTokenCeiling(
+        toolDefs, systemPrompt, history, ceiling, ALWAYS_INCLUDE, intentToolFilter,
+      )
+    }
+
     // Auto-compact if estimated token count exceeds COMPACT_THRESHOLD of context limit.
     // Skip compaction for subagents (maxDepth > 0) and E2E stubs to keep those simple.
     if (!process.env.WOS_E2E_AGENT_SCRIPT && maxDepth === 0) {
       let estimated = estimateConversationTokens(history, systemPrompt, toolDefs)
 
-      // Hard guardrail for small-context models: ensure we leave headroom for output tokens.
-      // If we are close to the limit, compact even if we haven't crossed COMPACT_THRESHOLD.
-      const minOutputHeadroom = smallCtx ? 768 : 2048
+      // Hard guardrail: ensure we leave headroom for output tokens.
       const mustCompact = estimated > effectiveContextLimit - minOutputHeadroom
 
-      if ((mustCompact || estimated > effectiveContextLimit * COMPACT_THRESHOLD) && history.length > 4) {
+      // mustCompact fires even on short histories (fresh single-turn conversations
+      // can still overflow if the system prompt + tool schemas are large).
+      // The softer COMPACT_THRESHOLD path requires history.length > 4 to avoid
+      // needlessly compacting brand-new conversations on capable models.
+      if (mustCompact || (estimated > effectiveContextLimit * COMPACT_THRESHOLD && history.length > 4)) {
         yield { type: 'compact_started' }
         try {
           // Try pruning first (fast, no API call). If still over threshold, summarize.
@@ -381,7 +563,7 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
             yield { type: 'compact_complete', summary: `Pruned ${history.length - pruned.length} old messages to stay within context limit.` }
           } else {
             const abortSignal = signal ?? new AbortController().signal
-            const { summarized, summary } = await summarizeHistory(history, model, abortSignal, apiKeyOverride)
+            const { summarized, summary } = await summarizeHistory(history, activeModel, abortSignal, apiKeyOverride)
             history.length = 0
             history.push(...summarized)
             yield { type: 'compact_complete', summary }
@@ -397,7 +579,7 @@ export async function* queryLoop(options: QueryOptions): AsyncGenerator<AgentEve
     const stream = process.env.WOS_E2E_AGENT_SCRIPT
       ? stubStream()
       : provider.stream({
-          model,
+          model: activeModel,
           messages: history,
           tools: toolDefs,
           systemPrompt,

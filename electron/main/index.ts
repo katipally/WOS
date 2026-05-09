@@ -102,8 +102,14 @@ app.whenReady().then(async () => {
     // host Node), and reuses the live main-process binding.
     if (isE2E) {
       const dbMod = await import('./db')
-      ;(globalThis as { __wos_db?: { queryRaw: (s: string, p: unknown[]) => unknown[] } }).__wos_db = {
+      ;(globalThis as {
+        __wos_db?: {
+          queryRaw: (s: string, p: unknown[]) => unknown[]
+          runRaw: (s: string, p: unknown[]) => void
+        }
+      }).__wos_db = {
         queryRaw: (sql, params) => dbMod.queryRaw(sql, (params || []) as never),
+        runRaw: (sql, params) => dbMod.runRaw(sql, (params || []) as never),
       }
       console.log('[main] WOS_E2E exposed __wos_db helper')
     }

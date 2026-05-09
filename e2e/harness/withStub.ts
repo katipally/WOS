@@ -57,8 +57,18 @@ export function stubPath(name: string): string {
 
 /** Helper: wait for a textarea, type text, and press Enter to send a message. */
 export async function sendChatMessage(window: import('@playwright/test').Page, text: string): Promise<void> {
-  const textarea = window.getByPlaceholder('Send a message… (/ for commands, @ to attach a file)')
-  await textarea.waitFor({ state: 'visible', timeout: 30_000 })
+  // App can open on Home view (new chat flow) or Chat view (existing conversation).
+  const homeComposer = window.getByPlaceholder('Plan, build, or ask anything… (type / or @)')
+  const chatComposer = window.getByPlaceholder('Send a message… (/ for commands, @ to attach a file)')
+
+  let textarea = homeComposer
+  try {
+    await homeComposer.waitFor({ state: 'visible', timeout: 5_000 })
+  } catch {
+    textarea = chatComposer
+    await chatComposer.waitFor({ state: 'visible', timeout: 30_000 })
+  }
+
   await textarea.fill(text)
   await window.keyboard.press('Enter')
 }
