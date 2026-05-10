@@ -27,7 +27,7 @@ WOS is extensible through Skills (Markdown knowledge packs), Rules (Cursor-compa
 ## Quick Start
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/katipally/WOS
 cd wos
 npm install
 npm run dev
