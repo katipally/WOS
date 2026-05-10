@@ -11,12 +11,9 @@ export interface MeetingAnalysisResult {
   qa?: Array<{ question: string; answer?: string }>
 }
 
-/**
- * Tool schema we force the model to call exactly once. Routing the structured
- * output through a tool call (rather than asking for raw JSON in the text
- * stream) gives us guaranteed-parseable input on BOTH OpenAI and Anthropic —
- * no truncation, no markdown fences, no "Unterminated string" 400s.
- */
+// Forces the model to call this tool exactly once. Using a tool call instead
+// of raw JSON in the text stream gives guaranteed-parseable output on both
+// OpenAI and Anthropic: no truncation, no markdown fences, no 400 errors.
 const SAVE_NOTES_TOOL = {
   name: 'save_meeting_notes',
   description: 'Persist the structured meeting notes back to the host application. Call this exactly once with the full result.',
@@ -84,8 +81,8 @@ export const SAVE_NOTES_TOOL_FOR_TESTS = SAVE_NOTES_TOOL
 
 export function clampTranscript(transcript: string, maxChars = 120_000): string {
   if (transcript.length <= maxChars) return transcript
-  // Keep the head and the tail — meetings usually open with intros and close
-  // with action items/decisions; the middle is the most expendable.
+  // Keep the head and the tail. Meetings typically open with intros and close
+  // with action items; the middle section is the most expendable.
   const head = transcript.slice(0, Math.floor(maxChars * 0.7))
   const tail = transcript.slice(-Math.floor(maxChars * 0.3))
   return `${head}\n\n[... transcript truncated ${transcript.length - maxChars} chars ...]\n\n${tail}`

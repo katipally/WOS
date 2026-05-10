@@ -1,30 +1,40 @@
-# WOS E2E Tests
+# WorkOS (WOS) E2E Tests
 
-End-to-end tests for the WOS Electron app, powered by Playwright + a deterministic agent stub.
+End-to-end tests for the WOS Electron app, powered by Playwright with a deterministic agent stub.
 
-## Quick start
+## Quick Start
+
+Before running any E2E tests, build the app once:
 
 ```bash
-# Build native module for Electron (runs automatically before each e2e script)
-npm run e2e:full
+npm run e2e:build
 ```
 
-Individual suites:
+Then run individual suites:
 
 ```bash
-# Smoke test (boot + basic DB check)
+# Smoke test: boot, window, and database sanity check
 npm run e2e:smoke
 
-# Full Phase D suite
+# Interactive: open Playwright Inspector
+npm run e2e:live
+
+# Record video and trace to e2e/scratch/
+npm run e2e:trace
+
+# Full integration suite
 npm run e2e:full
 ```
 
-## Stub mechanism
+The `pre` hooks on each `e2e:*` script rebuild `better-sqlite3` against Electron's Node ABI automatically. Always use these scripts rather than invoking `playwright test` directly.
 
-Real LLM calls are replaced by a **deterministic agent script** when the env var
-`WOS_E2E_AGENT_SCRIPT` is set to the path of a JSON file.
+---
 
-### Script format
+## Stub Mechanism
+
+Real LLM calls are replaced by a deterministic agent script when `WOS_E2E_AGENT_SCRIPT` is set to the path of a JSON stub file.
+
+### Script Format
 
 ```json
 {
@@ -37,67 +47,68 @@ Real LLM calls are replaced by a **deterministic agent script** when the env var
 }
 ```
 
-Each element of `turns` is a list of `StreamEvent` objects that are yielded as a single
-"LLM response". Turns are consumed globally in order across the entire process lifetime —
-including subagent `queryLoop()` calls.
+Each element of `turns` is an array of `StreamEvent` objects yielded as a single LLM response. Turns are consumed globally in order across the entire process lifetime, including subagent `queryLoop()` calls.
 
 **Turn ordering with subagents:**
-1. Turn 0 — parent LLM call (typically includes a `tool_use_start` for `Task`)
-2. Turn 1 — the subagent's LLM call (the Task tool calls `queryLoop()` internally)
-3. Turn 2 — parent's follow-up LLM call after the subagent completes
 
-> **Warning:** Do not script concurrent `Task` calls. Two subagents racing over the shared
-> turn counter will interleave unpredictably.
+1. Turn 0 -- parent LLM call (typically includes a `tool_use_start` for `Task`)
+2. Turn 1 -- the subagent's LLM call (the `Task` tool calls `queryLoop()` internally)
+3. Turn 2 -- parent's follow-up LLM call after the subagent completes
 
-### Tool execution is real
+> Do not script concurrent `Task` calls. Two subagents racing over the shared turn counter will produce unpredictable results.
 
-When the stub scripts a `tool_use_start` event, the tool **actually executes** in the main
-process. This means:
+### Tool Execution is Real
 
-- `automation_create` will create a real DB row.
-- **Do not** script `ask_user` — it blocks waiting for a UI response.
+When the stub scripts a `tool_use_start` event, the tool actually executes in the main process:
 
-### Stub JSON files
+- `automation_create` will create a real database row.
+- Do not script `ask_user`; it blocks waiting for a UI response that will never arrive.
 
-Pre-built stubs live in `e2e/scripts/stubs/`:
+### Pre-built Stubs
+
+Stub JSON files live in `e2e/scripts/stubs/`:
 
 | File | Description |
 |---|---|
-| `simple-reply.json` | Single text reply — "Hello from WOS stub!" |
-| `subagent-dispatch.json` | Parent dispatches a `Task`, subagent replies, parent confirms |
+| `simple-reply.json` | Single text reply |
+| `subagent-dispatch.json` | Parent dispatches a Task, subagent replies, parent confirms |
 
-## Test suites
+---
 
-| File | Tag | What it covers |
-|---|---|---|
-| `boot-chat.spec.ts` | d1 | App boot, stub reply, DB persistence, conversation history |
-| `apps-context.spec.ts` | d2 | `app_context_snapshots` seeding and round-trip |
-| `automations.spec.ts` | d3 | `automation_create` for `schedule` / `hook` / `webhook` kinds |
-| `subagents.spec.ts` | d4 | `/subagents list/kill` slash commands, `subagent_runs` seeding |
+## Test Suites
 
-## Artifacts
-
-| Path | Contents |
+| File | What it covers |
 |---|---|
-| `e2e/.artifacts/test-results/` | Playwright traces, videos, screenshots |
-| `e2e/.artifacts/html-report/` | Playwright HTML report |
-| `e2e/scratch/` | Per-run state dumps, harness scratch space |
+| `smoke.spec.ts` | Boot, window opens, DB initialized, preload bridge present |
+| `boot-chat.spec.ts` | Stub reply, DB persistence, conversation history |
+| `apps-context.spec.ts` | `app_context_snapshots` seeding and round-trip |
+| `automations.spec.ts` | `automation_create` for `schedule`, `hook`, and `webhook` kinds |
+| `subagents.spec.ts` | Subagent dispatch, `subagent_runs` seeding |
 
-Open the HTML report after a run:
-```bash
-npx playwright show-report e2e/.artifacts/html-report
+---
+
+## Fixtures
+
+Each spec gets three fixtures from `e2e/harness/fixtures.ts`:
+
+```ts
+test('example', async ({ wos, harnessDb, dump }) => {
+  // Drive the UI
+  await wos.window.click('text=Settings')
+
+  // Query the live database from the test runner
+  const rows = await harnessDb.queryAll("SELECT * FROM workspaces")
+
+  // Write a snapshot to e2e/scratch/ (screenshot + DOM + logs)
+  await dump('after-settings-open')
+})
 ```
 
-## Environment variables
+Live LLM-backed tests are gated behind `WOS_E2E_LIVE=1`.
 
-| Variable | Description |
-|---|---|
-| `WOS_E2E=1` | Set automatically by the harness — enables `__wos_db` bridge and skips single-instance lock |
-| `WOS_E2E_AGENT_SCRIPT=<path>` | Path to a stub JSON file; bypasses real LLM calls |
-| `WOS_USER_DATA=<dir>` | Override the Electron userData directory |
-| `WOS_E2E_VERBOSE=1` | Forward Electron main-process logs to the test runner stdout |
+---
 
-## Writing new stub tests
+## Writing New Stub Tests
 
 ```ts
 import { withStub, stubPath, sendChatMessage } from './harness/withStub'
@@ -114,9 +125,39 @@ test('my test', async () => {
 })
 ```
 
-## Skipped tests
+---
+
+## Artifacts
+
+| Path | Contents |
+|---|---|
+| `e2e/.artifacts/test-results/` | Playwright traces, videos, and screenshots |
+| `e2e/.artifacts/html-report/` | Playwright HTML report |
+| `e2e/scratch/` | Per-run state dumps and harness scratch space |
+
+Open the HTML report after a run:
+
+```bash
+npx playwright show-report e2e/.artifacts/html-report
+```
+
+---
+
+## Environment Variables
+
+| Variable | Description |
+|---|---|
+| `WOS_E2E=1` | Set automatically by the harness; enables `__wos_db` bridge and skips single-instance lock |
+| `WOS_E2E_AGENT_SCRIPT=<path>` | Path to a stub JSON file; bypasses real LLM calls |
+| `WOS_USER_DATA=<dir>` | Override the Electron userData directory |
+| `WOS_E2E_VERBOSE=1` | Forward Electron main-process logs to the test runner stdout |
+| `WOS_E2E_LIVE=1` | Enable live LLM calls in tests that require them |
+
+---
+
+## Skipped Tests
 
 Tests marked `test.skip` have a `TODO` comment explaining the blocker. Common blockers:
 
-- **Clock mocking** — cron triggers require advancing time (`d3`)
-- **OAuth flow** — app context picker requires a mock app connection (`d2`)
+- **Clock mocking** -- cron triggers require advancing time
+- **OAuth flow** -- app context picker requires a mock app connection

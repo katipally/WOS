@@ -1,4 +1,4 @@
-# WOS Plugin SDK — `hello` sample
+# WorkOS Plugin SDK -- `hello` sample
 
 This is a minimal example plugin that registers a single tool, `hello__greet`.
 
@@ -16,7 +16,7 @@ Then restart WOS. On boot you should see:
 [plugins] loaded hello@1.0.0 (1 tool)
 ```
 
-Ask the chat agent to "use the greet tool" — it will call `hello__greet`
+Ask the chat agent to "use the greet tool" and it will call `hello__greet`
 and print a greeting.
 
 ## Authoring your own plugin
@@ -53,7 +53,7 @@ and print a greeting.
 ## Trust model
 
 Plugins run inside the main process with no sandbox in v1. Only install
-plugins you wrote or trust — they have full access to the user's machine.
+plugins you wrote or fully trust; they have full access to the user's machine.
 The `permissions` field is currently advisory and logged at load time;
 enforcement will arrive in a later release.
 
